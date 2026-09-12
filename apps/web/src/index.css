@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #3b82f6;
+  --color-secondary: #10b981;
+  --color-background: #0f172a;
+  --color-surface: #1e293b;
+  --color-danger: #ef4444;
+  --color-text: #f8fafc;
+  --color-textMuted: #94a3b8;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+.glass-panel {
+  background-color: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
+
+.animate-shake {
+  animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes flash-red {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.8); }
+  50% { box-shadow: 0 0 35px 6px rgba(239, 68, 68, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.flash-red {
+  animation: flash-red 0.8s ease-out;
+}
+
+@keyframes lightning-glow {
+  0%, 100% {
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.4), inset 0 0 12px rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(245, 158, 11, 0.75), 0 0 12px rgba(129, 182, 76, 0.5), inset 0 0 20px rgba(245, 158, 11, 0.3);
+    border-color: rgba(251, 191, 36, 1);
+  }
+}
+
+.animate-lightning-glow {
+  animation: lightning-glow 2s infinite ease-in-out;
+}
+
+@keyframes lightning-streak {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  60% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateX(300%);
+    opacity: 0;
+  }
+}
+
+.animate-lightning-streak {
+  animation: lightning-streak 2.8s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}

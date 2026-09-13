@@ -17,7 +17,17 @@ import AdminPanel from './pages/AdminPanel.jsx'
 import Learn from './pages/Learn.jsx'
 import Watch from './pages/Watch.jsx'
 import Community from './pages/Community.jsx'
+import axios from 'axios'
+import API_BASE_URL from './config/api'
 import './index.css'
+
+// Global interceptor: automatically redirects any legacy or hardcoded localhost calls to the live cloud backend
+axios.interceptors.request.use((config) => {
+  if (config.url && (config.url.includes('localhost:5000') || config.url.includes('127.0.0.1:5000'))) {
+    config.url = config.url.replace(/https?:\/\/(localhost|127\.0\.0\.1):5000/g, API_BASE_URL);
+  }
+  return config;
+});
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import API_BASE_URL from '../config/api';
 
 const SocketContext = createContext(null);
 
@@ -77,7 +78,7 @@ export function SocketProvider({ children }) {
 
   // Initialize and maintain single global Socket connection
   useEffect(() => {
-    const socket = io('http://localhost:5000', {
+    const socket = io(API_BASE_URL, {
       transports: ['websocket', 'polling']
     });
     socketRef.current = socket;

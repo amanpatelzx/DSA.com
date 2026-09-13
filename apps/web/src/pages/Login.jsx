@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import API_BASE_URL from '../config/api'
 
 export default function Login() {
   const [identifier, setIdentifier] = useState('') // Option 1: Username or Email ID
@@ -22,7 +23,7 @@ export default function Login() {
 
     setIsSubmitting(true)
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/login', { 
+      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { 
         identifier: identifier.trim(),
         password
       })

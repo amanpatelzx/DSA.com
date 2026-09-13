@@ -338,6 +338,26 @@ export default function ProblemView() {
   const [problem, setProblem] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [matchResult, setMatchResult] = useState(null);
+  const [practiceSolvedModal, setPracticeSolvedModal] = useState(null);
+
+  const handleSolveMore = () => {
+    setPracticeSolvedModal(null);
+    navigate('/training');
+  };
+
+  const handleNextPracticeProblem = async () => {
+    setPracticeSolvedModal(null);
+    try {
+      const res = await axios.get('http://localhost:5000/api/problems/random?count=1');
+      if (res.data?.slugs && res.data.slugs.length > 0) {
+        navigate(`/problem/${res.data.slugs[0]}`);
+      } else {
+        navigate('/training');
+      }
+    } catch {
+      navigate('/training');
+    }
+  };
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const [opponentTestsPassed, setOpponentTestsPassed] = useState(0);
   const autoSaveTimerRef = useRef(null);
@@ -1960,6 +1980,7 @@ export default function ProblemView() {
       setTestcases(initialCases);
       setSelectedCaseIdx(0);
       setRunResults(null);
+      setPracticeSolvedModal(null);
     };
 
     fetchProblem();
@@ -2245,34 +2266,48 @@ export default function ProblemView() {
             clearBattleSession(true);
             playVictorySound();
             setTimerActive(false);
-            if (socketRef.current) {
-              socketRef.current.emit('battle:test_update', {
-                battleId: battleIdRef.current,
-                testsPassed: res.data.cases?.length || 3,
-                testsTotal: res.data.cases?.length || 3
+
+            if (isChallenge) {
+              if (socketRef.current) {
+                socketRef.current.emit('battle:test_update', {
+                  battleId: battleIdRef.current,
+                  testsPassed: res.data.cases?.length || 3,
+                  testsTotal: res.data.cases?.length || 3
+                });
+                socketRef.current.emit('battle:won', {
+                  battleId: battleIdRef.current,
+                  winnerUsername: activeUsername,
+                  finalCode: code,
+                  language
+                });
+                socketRef.current.emit('battle:live_leave', { battleId: battleIdRef.current });
+              }
+              fetchOpponentBattleCode(battleIdRef.current);
+              const isRatedResult = Boolean(res.data.isRated);
+              const ratingChange = typeof res.data.ratingChange === 'number' ? res.data.ratingChange : (isRated ? 16 : 0);
+              setMatchResult({
+                status: activeToken ? 'win' : 'win_guest',
+                newRating: res.data.newRating || (userModeRating + ratingChange),
+                ratingChange,
+                isRated: isRatedResult,
+                streak: res.data.streak || 1,
+                mode,
+                opponent: opponentParam,
+                problemsSolved: nextSolved.size,
+                totalProblems: matchProblems.length
               });
-              socketRef.current.emit('battle:won', {
-                battleId: battleIdRef.current,
-                winnerUsername: activeUsername,
-                finalCode: code,
-                language
+            } else {
+              // In Normal Practice: Show celebratory congratulations modal
+              setPracticeSolvedModal({
+                title: problem?.title || activeSlug,
+                slug: activeSlug,
+                difficulty: problem?.difficulty || 'Easy',
+                runtime: res.data.runtime || '35 ms',
+                memory: res.data.memory || '14.2 MB',
+                solveTime: formatPracticeTime(practiceSeconds),
+                casesCount: res.data.cases?.length || 3
               });
-              socketRef.current.emit('battle:live_leave', { battleId: battleIdRef.current });
             }
-            fetchOpponentBattleCode(battleIdRef.current);
-            const isRatedResult = Boolean(res.data.isRated);
-            const ratingChange = typeof res.data.ratingChange === 'number' ? res.data.ratingChange : (isRated ? 16 : 0);
-            setMatchResult({
-              status: activeToken ? 'win' : 'win_guest',
-              newRating: res.data.newRating || (userModeRating + ratingChange),
-              ratingChange,
-              isRated: isRatedResult,
-              streak: res.data.streak || 1,
-              mode,
-              opponent: opponentParam,
-              problemsSolved: nextSolved.size,
-              totalProblems: matchProblems.length
-            });
             if (refreshUser) refreshUser();
           } else {
             // Multi-problem progress: 1 of N solved!
@@ -3540,8 +3575,8 @@ export default function ProblemView() {
         </div>
       )}
 
-      {/* VICTORY / DEFEAT / MATCH FINISHED MODAL */}
-      {matchResult && (
+      {/* VICTORY / DEFEAT / MATCH FINISHED MODAL (ONLY IN 1V1 BATTLES) */}
+      {matchResult && isChallenge && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in duration-200">
             <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 shadow-xl ${
@@ -3696,6 +3731,98 @@ export default function ProblemView() {
               >
                 Challenge Next Match
               </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NORMAL PRACTICE CONGRATULATIONS & SOLVE MORE MODAL */}
+      {practiceSolvedModal && !isChallenge && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#21201d] border border-emerald-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Top subtle glow */}
+            <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-emerald-500/15 blur-3xl rounded-full pointer-events-none" />
+
+            {/* Celebration Icon */}
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 bg-gradient-to-tr from-emerald-600 to-green-400 shadow-xl shadow-emerald-500/25 ring-4 ring-emerald-500/20 text-white">
+              🎉
+            </div>
+
+            {/* Header */}
+            <h2 className="text-2xl sm:text-3xl font-black text-white mb-1 tracking-tight">
+              Congratulations!
+            </h2>
+            <p className="text-sm font-semibold text-emerald-400 mb-2">
+              Problem Solved Successfully
+            </p>
+            <p className="text-xs text-[#8c8b88] mb-6">
+              Great job! You have solved <strong className="text-white font-bold">{practiceSolvedModal.title}</strong>
+            </p>
+
+            {/* Stats summary card */}
+            <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-6 text-left flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#8c8b88]">Difficulty:</span>
+                <span className={`text-xs font-black px-2.5 py-0.5 rounded-full border ${getDifficultyBadge(practiceSolvedModal.difficulty)}`}>
+                  {practiceSolvedModal.difficulty}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                <span className="text-xs text-[#8c8b88]">Time Taken:</span>
+                <span className="text-xs font-bold text-white font-mono flex items-center gap-1">
+                  <span>⏱️</span>
+                  <span>{practiceSolvedModal.solveTime || '00:00'}</span>
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                <span className="text-xs text-[#8c8b88]">Test Cases:</span>
+                <span className="text-xs font-extrabold text-emerald-400 flex items-center gap-1">
+                  <span>✓</span>
+                  <span>All {practiceSolvedModal.casesCount} Passed</span>
+                </span>
+              </div>
+
+              {(practiceSolvedModal.runtime || practiceSolvedModal.memory) && (
+                <div className="flex items-center justify-between border-t border-white/5 pt-2.5 text-xs">
+                  <span className="text-[#8c8b88]">Performance:</span>
+                  <span className="text-white/80 font-mono text-[11px]">
+                    {practiceSolvedModal.runtime} • {practiceSolvedModal.memory}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={handleSolveMore}
+                className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-black text-sm py-3.5 px-5 rounded-xl transition shadow-lg shadow-[#81b64c]/25 flex items-center justify-center gap-2 cursor-pointer group"
+              >
+                <span>🎯</span>
+                <span>Solve More</span>
+                <span className="group-hover:translate-x-1 transition-transform">→</span>
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleNextPracticeProblem}
+                  className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-white/10 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>⚡</span>
+                  <span>Next Problem</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPracticeSolvedModal(null)}
+                  className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white/70 hover:text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-white/10 transition cursor-pointer"
+                >
+                  Review Code
+                </button>
+              </div>
             </div>
           </div>
         </div>

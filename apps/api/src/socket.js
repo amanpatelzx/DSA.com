@@ -63,6 +63,82 @@ export const getOnlineUsernames = () => {
 };
 
 /**
+ * Calculates real-time online coders count:
+ * Counts unique registered users logged in plus any guest visitor connections.
+ * Ensures the value is strictly authentic and never dummy.
+ */
+export const getOnlineCodersCount = () => {
+  const loggedInUsers = getOnlineUsernames();
+  let guestSockets = 0;
+  if (io && io.sockets && io.sockets.sockets) {
+    for (const [sId] of io.sockets.sockets) {
+      if (!socketToUser.has(sId)) {
+        guestSockets++;
+      }
+    }
+  }
+  const total = loggedInUsers.length + guestSockets;
+  return Math.max(total, 1);
+};
+
+/**
+ * Calculates real-time count of active ongoing battles.
+ * Automatically cleans up stale matches older than 10 minutes.
+ */
+export const getRunningBattlesCount = () => {
+  const now = Date.now();
+  let count = 0;
+  for (const [battleId, b] of liveBattles.entries()) {
+    if (now - (b.lastActivity || b.startedAt || now) > 600000) {
+      liveBattles.delete(battleId);
+      continue;
+    }
+    if (b.status === 'IN_PROGRESS') {
+      count++;
+    }
+  }
+  return count;
+};
+
+/**
+ * Returns platform statistics with zero dummy data:
+ * - onlineCoders: strictly real online users/visitors
+ * - runningBattles: battles currently in progress
+ * - finishedBattles: total matches completed or resigned in DB till today
+ */
+export const getPlatformStats = async () => {
+  const onlineCoders = getOnlineCodersCount();
+  const runningBattles = getRunningBattlesCount();
+  let finishedBattles = 0;
+  try {
+    finishedBattles = await Battle.countDocuments({
+      status: { $in: ['COMPLETED', 'RESIGNED', 'ABANDONED', 'DRAW'] }
+    });
+  } catch (err) {
+    console.warn('Error counting finished battles:', err.message);
+  }
+  return {
+    onlineCoders,
+    runningBattles,
+    finishedBattles
+  };
+};
+
+/**
+ * Broadcasts real-time platform statistics to all connected clients
+ */
+export const broadcastPlatformStats = async () => {
+  try {
+    if (!io) return;
+    const stats = await getPlatformStats();
+    io.emit('stats:update', stats);
+  } catch (err) {
+    console.warn('Platform stats broadcast error:', err.message);
+  }
+};
+
+
+/**
  * Returns the currently active live battle with the highest player rating.
  */
 export const getTopLiveBattle = () => {
@@ -113,6 +189,9 @@ export const initSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
+    // Send immediate platform stats to connecting socket & broadcast real-time count
+    getPlatformStats().then(stats => socket.emit('stats:update', stats)).catch(() => {});
+    broadcastPlatformStats();
     // 1. Presence registration
     socket.on('presence:online', (userData) => {
       if (!userData) return;
@@ -145,6 +224,7 @@ export const initSocket = (httpServer) => {
       }
 
       io.emit('presence:update', { userId, username: usernameRaw, status: 'ONLINE' });
+      broadcastPlatformStats();
     });
 
     // 2. Direct Friend / User Challenge Handling
@@ -700,17 +780,23 @@ export const initSocket = (httpServer) => {
       socketToBattle.set(socket.id, data.battleId);
       socket.join(data.battleId);
       io.emit('live:top_battle_update', getTopLiveBattle());
+      broadcastPlatformStats();
     });
 
     socket.on('battle:live_leave', ({ battleId }) => {
       if (battleId && liveBattles.has(battleId)) {
         liveBattles.delete(battleId);
         io.emit('live:top_battle_update', getTopLiveBattle());
+        broadcastPlatformStats();
       }
     });
 
     socket.on('live:get_top_battle', () => {
       socket.emit('live:top_battle_update', getTopLiveBattle());
+    });
+
+    socket.on('stats:get', async () => {
+      socket.emit('stats:update', await getPlatformStats());
     });
 
     // 6. Clean disconnection handling
@@ -768,10 +854,13 @@ export const initSocket = (httpServer) => {
             if (Date.now() - (b.lastActivity || 0) > 10000) {
               liveBattles.delete(bId);
               io.emit('live:top_battle_update', getTopLiveBattle());
+              broadcastPlatformStats();
             }
           }
         }, 10000);
       }
+
+      broadcastPlatformStats();
     });
   });
 };

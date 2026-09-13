@@ -3,7 +3,7 @@ import Battle from '../models/Battle.js';
 import User from '../models/User.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { protect } from '../middleware/authMiddleware.js';
-import { getTopLiveBattle, liveBattles } from '../socket.js';
+import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats } from '../socket.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 
 const router = express.Router();
@@ -108,7 +108,7 @@ router.post('/record', protect, async (req, res) => {
 
     const finalOpponentName = realOpponent ? realOpponent.username : (opponentName || pickedOpponent.name);
     const finalOpponentRating = realOpponent ? (realOpponent.ratings?.[ratingKey] || 1500) : pickedOpponent.rating;
-    const finalOpponentFlag = realOpponent ? (realOpponent.countryFlag || '🇮🇳') : pickedOpponent.flag;
+    const finalOpponentFlag = realOpponent ? (realOpponent.countryFlag || '') : pickedOpponent.flag;
 
     const battle = await Battle.create({
       mode,
@@ -151,6 +151,11 @@ router.post('/record', protect, async (req, res) => {
       }
     }
 
+    if (req.body.battleId && liveBattles.has(req.body.battleId)) {
+      liveBattles.delete(req.body.battleId);
+    }
+    broadcastPlatformStats();
+
     res.status(201).json({
       success: true,
       battle,
@@ -183,15 +188,19 @@ router.get('/my', protect, async (req, res) => {
 });
 
 // @route   GET /api/battles/stats
-// @desc    Get real platform statistics
+// @desc    Get real platform statistics (real online coders, running battles, finished battles)
 // @access  Public
 router.get('/stats', async (req, res) => {
   try {
-    const totalUsers = await User.countDocuments();
-    const totalBattles = await Battle.countDocuments({ status: 'COMPLETED' });
+    const stats = await getPlatformStats();
     res.json({
-      totalPlayers: totalUsers,
-      totalGames: totalBattles
+      success: true,
+      onlineCoders: stats.onlineCoders,
+      runningBattles: stats.runningBattles,
+      finishedBattles: stats.finishedBattles,
+      // Backward compatibility aliases
+      totalPlayers: stats.onlineCoders,
+      totalGames: stats.finishedBattles
     });
   } catch (error) {
     console.error('Fetch stats error:', error);
@@ -289,6 +298,7 @@ router.post('/live-register', (req, res) => {
     });
 
     res.json({ success: true, topBattle: getTopLiveBattle() });
+    broadcastPlatformStats();
   } catch (err) {
     console.error('Live register error:', err);
     res.status(500).json({ message: 'Server error registering live battle' });
@@ -422,6 +432,11 @@ router.post('/resign', protect, async (req, res) => {
         console.warn('RatingHistory log error on resign:', rhErr.message);
       }
     }
+
+    if (req.body.battleId && liveBattles.has(req.body.battleId)) {
+      liveBattles.delete(req.body.battleId);
+    }
+    broadcastPlatformStats();
 
     res.json({
       success: true,

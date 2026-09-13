@@ -13,8 +13,9 @@ const userSchema = new mongoose.Schema({
   },
   email: {
     type: String,
-    required: true,
+    required: false,
     unique: true,
+    sparse: true,
     lowercase: true,
     trim: true
   },
@@ -38,19 +39,19 @@ const userSchema = new mongoose.Schema({
   },
   country: {
     type: String,
-    default: 'India'
+    default: ''
   },
   countryFlag: {
     type: String,
-    default: '🇮🇳'
+    default: ''
   },
   location: {
     type: String,
-    default: 'India'
+    default: ''
   },
   organization: {
     type: String,
-    default: 'REC BANDA'
+    default: ''
   },
   profileViews: {
     type: Number,
@@ -68,8 +69,19 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['USER', 'ADMIN', 'BOT'],
+    enum: ['USER', 'ADMIN', 'SUPER_ADMIN', 'BOT'],
     default: 'USER'
+  },
+  isBanned: {
+    type: Boolean,
+    default: false
+  },
+  bannedReason: {
+    type: String,
+    default: ''
+  },
+  bannedAt: {
+    type: Date
   },
   isBot: {
     type: Boolean,

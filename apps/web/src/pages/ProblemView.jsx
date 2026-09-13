@@ -276,11 +276,14 @@ export default function ProblemView() {
   // Rated vs Non-Rated match configuration
   const isExplicitNonRated = searchParams.get('rated') === '0' || searchParams.get('rated') === 'false';
   const isLikelyBot = Boolean(
-    opponentParam && (
+    searchParams.get('isBot') === '1' ||
+    searchParams.get('bot') === '1' ||
+    (opponentParam && (
       opponentParam.toLowerCase().includes('bot') ||
       opponentParam.toLowerCase().includes('computer') ||
-      opponentParam.toLowerCase().includes('stockfish')
-    )
+      opponentParam.toLowerCase().includes('stockfish') ||
+      opponentParam.toLowerCase().includes('deepcoder')
+    ))
   );
   const tournamentId = searchParams.get('tournamentId') || (
     searchParams.get('contest') && searchParams.get('contest') !== 'tournament'
@@ -877,6 +880,21 @@ export default function ProblemView() {
       }
     };
   }, [activeSlug, mode, timeControlParam, user, problem, isChallenge]);
+
+  // Simulated bot opponent progress over match duration
+  useEffect(() => {
+    if (!isChallenge || !isLikelyBot || matchResult) return;
+    const totalSecs = parseSeconds(timeControlParam);
+    const elapsed = totalSecs - timeLeft;
+    const progressRatio = elapsed / (totalSecs || 1);
+
+    const totalCases = testcases.length || 3;
+    if (progressRatio > 0.72) {
+      setOpponentTestsPassed(Math.min(totalCases - 1, 2));
+    } else if (progressRatio > 0.36) {
+      setOpponentTestsPassed(1);
+    }
+  }, [isChallenge, isLikelyBot, timeLeft, timeControlParam, testcases.length, matchResult]);
 
   const broadcastCode = (newCode, currentLang) => {
     if (!isChallenge) return;
@@ -2176,7 +2194,7 @@ export default function ProblemView() {
               </span>
               <span className="font-semibold text-white/90 truncate max-w-[90px]">{opponentParam}</span>
               {isLikelyBot && (
-                <span className="text-[9px] font-mono bg-white/10 text-white/60 px-1 rounded uppercase">Bot</span>
+                <span className="text-[9px] font-mono bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1 rounded uppercase font-bold">Bot</span>
               )}
               {opponentTestsPassed > 0 && (
                 <span className="text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded animate-pulse">

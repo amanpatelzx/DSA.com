@@ -19,6 +19,12 @@ export const protect = async (req, res, next) => {
         return res.status(401).json({ message: 'Not authorized, user not found' });
       }
 
+      if (req.user.isBanned) {
+        return res.status(403).json({
+          message: `Your account has been banned. Reason: ${req.user.bannedReason || 'Violation of platform rules'}`
+        });
+      }
+
       return next();
     } catch (error) {
       console.error(error);
@@ -32,9 +38,17 @@ export const protect = async (req, res, next) => {
 };
 
 export const admin = (req, res, next) => {
-  if (req.user && req.user.role === 'ADMIN') {
+  if (req.user && (req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN')) {
     next();
   } else {
     res.status(403).json({ message: 'Not authorized as an admin' });
+  }
+};
+
+export const superAdmin = (req, res, next) => {
+  if (req.user && req.user.role === 'SUPER_ADMIN') {
+    next();
+  } else {
+    res.status(403).json({ message: 'Not authorized: Super Admin access required' });
   }
 };

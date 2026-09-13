@@ -63,10 +63,18 @@ export default function Community() {
   const [manageSuccess, setManageSuccess] = useState('');
   const [manageSubmitting, setManageSubmitting] = useState(false);
 
-  // Auto-open create modal if url parameter exists
+  // Auto-open create modal or switch tab if url parameter exists
   useEffect(() => {
     if (searchParams.get('create') === 'club' || searchParams.get('create') === '1') {
       setShowCreateModal(true);
+    }
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'clubs') {
+      setActiveTab('clubs');
+    } else if (tabParam === 'friends') {
+      setActiveTab('friends');
+    } else if (tabParam === 'leaderboard') {
+      setActiveTab('leaderboard');
     }
   }, [searchParams]);
 
@@ -586,8 +594,12 @@ export default function Community() {
                                 </div>
                                 <div className="flex items-center gap-1.5 text-xs text-[#7d7c78]">
                                   <span>@{p.username}</span>
-                                  <span>•</span>
-                                  <span>{p.countryFlag || '🇮🇳'}</span>
+                                  {p.countryFlag && (
+                                    <>
+                                      <span>•</span>
+                                      <span>{p.countryFlag}</span>
+                                    </>
+                                  )}
                                   {p.organization && (
                                     <>
                                       <span>•</span>

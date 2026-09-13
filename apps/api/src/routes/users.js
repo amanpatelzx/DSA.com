@@ -24,7 +24,12 @@ router.get('/leaderboard', async (req, res) => {
     const filter = {
       isBot: { $ne: true },
       role: { $ne: 'BOT' },
-      username: { $not: /bot|stockfish|computer|deepcoder/i }
+      username: { 
+        $not: /bot|stockfish|computer|deepcoder|^test_|^tester_|^testuser|^dp_tester|^social_tester|^resign_user|^tourney|^tourneyhero|^coder_alice|^coder_bob|^coder_\d+|^u_\d+/i 
+      },
+      email: { 
+        $not: /@example\.com|@test\.com|@bot\.local|@dummy\.com/i 
+      }
     };
     if (query) {
       filter.$and = [
@@ -121,7 +126,12 @@ router.get('/search', async (req, res) => {
     const filter = {
       isBot: { $ne: true },
       role: { $ne: 'BOT' },
-      username: { $not: /bot|stockfish|computer|deepcoder/i }
+      username: { 
+        $not: /bot|stockfish|computer|deepcoder|^test_|^tester_|^testuser|^dp_tester|^social_tester|^resign_user|^tourney|^tourneyhero|^coder_alice|^coder_bob|^coder_\d+|^u_\d+/i 
+      },
+      email: { 
+        $not: /@example\.com|@test\.com|@bot\.local|@dummy\.com/i 
+      }
     };
     if (query) {
       filter.$and = [
@@ -261,16 +271,45 @@ const formatUserProfile = async (user, externalProfiles) => {
     const changeNum = isRated ? (userPlayer.ratingChange || (isWin ? 16 : isDraw ? 2 : -12)) : 0;
     const changeStr = isRated ? (changeNum > 0 ? `+${changeNum}` : `${changeNum}`) : '+0';
 
+    const pTitle = b.problemTitle || 'Two Sum';
+    const cleanTitle = pTitle.split(':')[0].trim();
+    const pSlug = cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'two-sum';
+    const solvedMatch = solvedProblemMap.get(pSlug) || 
+      Array.from(solvedProblemMap.values()).find(sp => 
+        sp.slug === pSlug ||
+        pTitle.toLowerCase().includes(sp.title?.toLowerCase()) ||
+        sp.title?.toLowerCase().includes(cleanTitle.toLowerCase())
+      );
+    
+    const userSubMatch = solvedMatch ? null : userSubmissions.find(s => 
+      s.problemId?.slug === pSlug || 
+      pTitle.toLowerCase().includes(s.problemId?.title?.toLowerCase() || '') ||
+      (s.problemId?.title && cleanTitle.toLowerCase().includes(s.problemId.title.toLowerCase()))
+    );
+
+    const matchCode = solvedMatch?.code || userSubMatch?.code || '';
+    const matchLang = solvedMatch?.language || userSubMatch?.language || 'cpp';
+    const matchDiff = solvedMatch?.difficulty || userSubMatch?.problemId?.difficulty || 'Easy';
+    const matchRuntime = solvedMatch?.runtime || userSubMatch?.runtime || 40;
+    const matchMemory = solvedMatch?.memory || userSubMatch?.memory || 14.2;
+
     return {
       id: b._id.toString(),
       mode: b.mode || 'Blitz',
       timeControl: b.timeControlStr || '3 min',
-      problemTitle: b.problemTitle || 'Two Sum',
+      problemTitle: pTitle,
+      title: pTitle,
+      slug: solvedMatch?.slug || userSubMatch?.problemId?.slug || pSlug,
+      difficulty: matchDiff,
+      code: matchCode,
+      language: matchLang,
+      runtime: matchRuntime,
+      memory: matchMemory,
       isRated,
       opponent: {
         username: b.opponentName || 'BOT',
         rating: b.opponentRating || 1500,
-        flag: b.opponentFlag || (isBot ? '🤖' : '🇮🇳'),
+        flag: b.opponentFlag || (isBot ? '🤖' : (userObj.countryFlag || '')),
         avatar: (b.opponentName && !isBot) ? b.opponentName.charAt(0).toUpperCase() : '🤖'
       },
       userResult: userScore,
@@ -425,10 +464,10 @@ const formatUserProfile = async (user, externalProfiles) => {
       avatar: userObj.avatar || '',
       bio: userObj.bio || '',
       about: userObj.bio || '',
-      country: userObj.country || 'India',
-      countryFlag: userObj.countryFlag || '🇮🇳',
-      location: userObj.location || 'India',
-      organization: userObj.organization || 'REC BANDA',
+      country: userObj.country || '',
+      countryFlag: userObj.countryFlag || '',
+      location: userObj.location || '',
+      organization: userObj.organization || '',
       streak: userObj.streak || 1,
       league,
       leagueRank: 17,
@@ -502,7 +541,8 @@ router.post('/friend-request/:username', protect, async (req, res) => {
     if (
       targetUsername.includes('bot') ||
       targetUsername.includes('stockfish') ||
-      targetUsername.includes('computer')
+      targetUsername.includes('computer') ||
+      targetUsername.includes('deepcoder')
     ) {
       return res.status(400).json({ message: 'Bots cannot be added as friends.' });
     }
@@ -582,7 +622,7 @@ router.get('/:username/friends', async (req, res) => {
       if (friendObj.isBot || friendObj.role === 'BOT') return null;
 
       const friendUsernameClean = (friendObj.username || '').toLowerCase().trim();
-      if (friendUsernameClean.includes('bot') || friendUsernameClean.includes('stockfish')) return null;
+      if (friendUsernameClean.includes('bot') || friendUsernameClean.includes('stockfish') || friendUsernameClean.includes('deepcoder')) return null;
       const isOnline = isUserOnline(friendUsernameClean);
 
       return {

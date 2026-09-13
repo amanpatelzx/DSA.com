@@ -217,7 +217,7 @@ router.post('/submit', async (req, res) => {
             status: 'COMPLETED',
             opponentName: realOpponent ? realOpponent.username : (opponentName || 'BOT'),
             opponentRating: realOpponent ? (realOpponent.ratings?.[ratingKey] || 1500) : 1510,
-            opponentFlag: realOpponent ? (realOpponent.countryFlag || '🇮🇳') : '🤖',
+            opponentFlag: realOpponent ? (realOpponent.countryFlag || '') : '🤖',
             moves: 28,
             testAccuracy: '100%',
             players: [

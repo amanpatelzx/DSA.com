@@ -356,6 +356,33 @@ export const CHALLENGE_CATEGORIES = [
   }
 ];
 
+export const BOTS = [
+  {
+    id: 'stockfishalgo',
+    username: 'StockfishAlgo',
+    displayName: 'StockfishAlgo AI',
+    rating: 1510,
+    tier: 'Intermediate',
+    description: 'Calculates optimal algorithmic steps with balanced speed.'
+  },
+  {
+    id: 'bytebot',
+    username: 'ByteBot',
+    displayName: 'ByteBot AI',
+    rating: 1300,
+    tier: 'Novice',
+    description: 'Friendly training bot, ideal for warmups & basic DSA.'
+  },
+  {
+    id: 'deepcoder',
+    username: 'DeepCoder',
+    displayName: 'DeepCoder AI',
+    rating: 1850,
+    tier: 'Master',
+    description: 'High-speed CP AI with advanced graph & DP optimizations.'
+  }
+];
+
 export default function App() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -363,11 +390,76 @@ export default function App() {
   // Modals state
   const [showTimeControlModal, setShowTimeControlModal] = useState(false);
   const [showChallengeModal, setShowChallengeModal] = useState(false);
+  const [showBotModal, setShowBotModal] = useState(false);
+  const [selectedBotId, setSelectedBotId] = useState('stockfishalgo');
+  const [botCategory, setBotCategory] = useState('bullet');
+  const [botSelectedOptionId, setBotSelectedOptionId] = useState('bullet_1');
+  const [customBotTime, setCustomBotTime] = useState('15');
+  const [customBotProblems, setCustomBotProblems] = useState(1);
+  const [customBotDifficulty, setCustomBotDifficulty] = useState('medium');
   const [showTournamentsModal, setShowTournamentsModal] = useState(false);
   const [appTournaments, setAppTournaments] = useState([]);
+  const [tournamentTab, setTournamentTab] = useState('upcoming'); // 'upcoming' | 'past'
   const [tournamentsLoading, setTournamentsLoading] = useState(false);
   const [viewingAppLeaderboard, setViewingAppLeaderboard] = useState(null);
   const [registeringId, setRegisteringId] = useState(null);
+
+  // Battle Challenge History Modal State
+  const [showGameHistoryModal, setShowGameHistoryModal] = useState(false);
+  const [gameHistoryList, setGameHistoryList] = useState([]);
+  const [gameHistoryLoading, setGameHistoryLoading] = useState(false);
+  const [selectedBattleCode, setSelectedBattleCode] = useState(null);
+  const [copiedBattleCode, setCopiedBattleCode] = useState(false);
+
+  const handleCopyBattleCode = (code) => {
+    if (!code) return;
+    navigator.clipboard.writeText(code);
+    setCopiedBattleCode(true);
+    setTimeout(() => setCopiedBattleCode(false), 2000);
+  };
+
+  const fetchGameHistory = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    const uname = user?.username || localStorage.getItem('username');
+    if (!token && !uname) {
+      setGameHistoryList([]);
+      return;
+    }
+    setGameHistoryLoading(true);
+    try {
+      if (token) {
+        const res = await axios.get('http://localhost:5000/api/users/me', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.data?.matchHistory) {
+          setGameHistoryList(res.data.matchHistory);
+        }
+      } else if (uname) {
+        const res = await axios.get(`http://localhost:5000/api/users/${uname}`);
+        if (res.data?.matchHistory) {
+          setGameHistoryList(res.data.matchHistory);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load battle history for modal:', err);
+    } finally {
+      setGameHistoryLoading(false);
+    }
+  }, [user?.username]);
+
+  useEffect(() => {
+    if (showGameHistoryModal) {
+      fetchGameHistory();
+    }
+  }, [showGameHistoryModal, fetchGameHistory]);
+
+  const upcomingTournaments = useMemo(() => {
+    return appTournaments.filter(t => t.status === 'UPCOMING' || t.status === 'ACTIVE');
+  }, [appTournaments]);
+
+  const pastTournaments = useMemo(() => {
+    return appTournaments.filter(t => t.status === 'COMPLETED');
+  }, [appTournaments]);
 
   const fetchAppTournaments = async () => {
     setTournamentsLoading(true);
@@ -532,8 +624,12 @@ export default function App() {
   const [customFriendProblems, setCustomFriendProblems] = useState(1);
   const [customFriendDifficulty, setCustomFriendDifficulty] = useState('medium'); // 'easy' | 'medium' | 'hard' | 'mixed'
 
-  // Real database stats
-  const [liveStats, setLiveStats] = useState({ totalPlayers: 1422, totalGames: 3540 });
+  // Real platform stats (strictly real values, zero dummy fallbacks)
+  const [liveStats, setLiveStats] = useState({
+    onlineCoders: 1,
+    runningBattles: 0,
+    finishedBattles: 0
+  });
   const [lastActivePractice, setLastActivePractice] = useState(null);
 
   // Live top-rated battle streaming state
@@ -564,8 +660,9 @@ export default function App() {
       .then(res => {
         if (res.data) {
           setLiveStats({
-            totalPlayers: Math.max(res.data.totalPlayers || 0, 1),
-            totalGames: res.data.totalGames || 0
+            onlineCoders: typeof res.data.onlineCoders === 'number' ? res.data.onlineCoders : (res.data.totalPlayers || 1),
+            runningBattles: typeof res.data.runningBattles === 'number' ? res.data.runningBattles : 0,
+            finishedBattles: typeof res.data.finishedBattles === 'number' ? res.data.finishedBattles : (res.data.totalGames || 0)
           });
         }
       })
@@ -593,6 +690,24 @@ export default function App() {
     }
   }, []);
 
+  // Listen for real-time live platform statistics updates
+  useEffect(() => {
+    if (!socket) return;
+    const handleStatsUpdate = (data) => {
+      if (data) {
+        setLiveStats({
+          onlineCoders: typeof data.onlineCoders === 'number' ? data.onlineCoders : (data.totalPlayers || 1),
+          runningBattles: typeof data.runningBattles === 'number' ? data.runningBattles : 0,
+          finishedBattles: typeof data.finishedBattles === 'number' ? data.finishedBattles : (data.totalGames || 0)
+        });
+      }
+    };
+    socket.on('stats:update', handleStatsUpdate);
+    return () => {
+      socket.off('stats:update', handleStatsUpdate);
+    };
+  }, [socket]);
+
   // Fetch initial top battle & subscribe to live socket updates
   useEffect(() => {
     axios.get('http://localhost:5000/api/battles/live-top')
@@ -608,54 +723,50 @@ export default function App() {
       })
       .catch(() => {});
 
-    let socket;
-    try {
-      socket = io('http://localhost:5000', {
-        transports: ['websocket', 'polling']
-      });
-      socketRef.current = socket;
+    if (!socket) return;
 
-      socket.emit('live:get_top_battle');
+    socket.emit('live:get_top_battle');
 
-      socket.on('live:top_battle_update', (data) => {
-        if (data && data.isRealLive) {
-          setTopBattle(data);
-          setIsLiveActive(true);
-          setLiveCode(data.player?.code || '');
-          if (data.timeLeft !== undefined) {
-            setLiveTimeLeft(data.timeLeft);
-          }
-        } else {
-          setIsLiveActive(false);
-        }
-      });
-
-      socket.on('live:code_stream', (data) => {
+    const handleTopBattle = (data) => {
+      if (data && data.isRealLive) {
+        setTopBattle(data);
         setIsLiveActive(true);
-        if (data.code !== undefined) {
-          setLiveCode(data.code);
-        }
+        setLiveCode(data.player?.code || '');
         if (data.timeLeft !== undefined) {
           setLiveTimeLeft(data.timeLeft);
         }
-        setTopBattle(prev => prev ? {
-          ...prev,
-          player: {
-            ...prev.player,
-            code: data.code !== undefined ? data.code : prev.player?.code,
-            language: data.language || prev.player?.language,
-            testsPassed: data.testsPassed !== undefined ? data.testsPassed : prev.player?.testsPassed
-          }
-        } : prev);
-      });
-    } catch (e) {
-      console.warn('Socket connection warning:', e);
-    }
+      } else {
+        setIsLiveActive(false);
+      }
+    };
+
+    const handleCodeStream = (data) => {
+      setIsLiveActive(true);
+      if (data.code !== undefined) {
+        setLiveCode(data.code);
+      }
+      if (data.timeLeft !== undefined) {
+        setLiveTimeLeft(data.timeLeft);
+      }
+      setTopBattle(prev => prev ? {
+        ...prev,
+        player: {
+          ...prev.player,
+          code: data.code !== undefined ? data.code : prev.player?.code,
+          language: data.language || prev.player?.language,
+          testsPassed: data.testsPassed !== undefined ? data.testsPassed : prev.player?.testsPassed
+        }
+      } : prev);
+    };
+
+    socket.on('live:top_battle_update', handleTopBattle);
+    socket.on('live:code_stream', handleCodeStream);
 
     return () => {
-      if (socket) socket.disconnect();
+      socket.off('live:top_battle_update', handleTopBattle);
+      socket.off('live:code_stream', handleCodeStream);
     };
-  }, []);
+  }, [socket]);
 
   // Timer countdown
   useEffect(() => {
@@ -912,6 +1023,32 @@ export default function App() {
     });
   };
 
+  const handleStartBotBattle = async () => {
+    const selectedBot = BOTS.find(b => b.id === selectedBotId) || BOTS[0];
+    const currentCat = CHALLENGE_CATEGORIES.find(c => c.id === botCategory) || CHALLENGE_CATEGORIES[0];
+    const selectedOpt = currentCat.options?.find(o => o.id === botSelectedOptionId) || currentCat.options?.[0] || CHALLENGE_CATEGORIES[0].options[0];
+
+    const mode = currentCat.isCustom ? 'Custom' : (selectedOpt.mode || 'Bullet');
+    const timeParam = currentCat.isCustom ? `${customBotTime} + 0` : (selectedOpt.timeControl || selectedOpt.time || '10 + 0');
+    const problemsCount = currentCat.isCustom ? customBotProblems : (selectedOpt.problems || 1);
+    const difficulty = currentCat.isCustom ? customBotDifficulty : '';
+
+    setShowBotModal(false);
+
+    const randomSlugs = await fetchRandomBattleProblems({
+      mode,
+      difficulty,
+      count: problemsCount,
+      problemsPool
+    });
+
+    const firstSlug = randomSlugs[0] || 'two-sum';
+    const problemListQuery = randomSlugs.join(',');
+    const diffQuery = difficulty ? `&difficulty=${encodeURIComponent(difficulty)}` : '';
+
+    navigate(`/problem/${firstSlug}?challenge=${encodeURIComponent(user?.username || 'coder')}&opponent=${encodeURIComponent(selectedBot.username)}&opponentRating=${selectedBot.rating}&mode=${encodeURIComponent(mode)}&time=${encodeURIComponent(timeParam)}&problems=${problemsCount}&problemList=${encodeURIComponent(problemListQuery)}&rated=0&isBot=1${diffQuery}`);
+  };
+
   return (
     <div className="min-h-full bg-[#161512] text-[#c9c8c5] px-4 py-6 sm:px-6 lg:px-8 flex flex-col justify-center items-center">
       
@@ -938,9 +1075,22 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex items-center gap-3 text-[11px] font-semibold text-[#888888]">
-              <span className="hidden sm:inline">⚡ <strong className="text-white font-bold">{liveStats.totalPlayers.toLocaleString()}</strong> Coders Online</span>
-              <span>⚔️ <strong className="text-white font-bold">{liveStats.totalGames.toLocaleString()}</strong> Battles</span>
+            <div className="flex items-center gap-2 sm:gap-3 text-[11px] font-semibold text-[#888888]">
+              <span className="flex items-center gap-1">
+                <span>⚡</span>
+                <strong className="text-white font-bold font-mono">{liveStats.onlineCoders}</strong>
+                <span className="hidden xs:inline sm:inline">{liveStats.onlineCoders === 1 ? 'Coder Online' : 'Coders Online'}</span>
+                <span className="inline xs:hidden sm:hidden">Online</span>
+              </span>
+              <span className="text-white/20">•</span>
+              <span className="flex items-center gap-1.5">
+                <span>⚔️</span>
+                <span className="text-amber-400 font-bold font-mono">{liveStats.runningBattles}</span>
+                <span className="text-amber-400/90 font-medium">Running</span>
+                <span className="text-white/20 mx-0.5">•</span>
+                <span className="text-white font-bold font-mono">{liveStats.finishedBattles.toLocaleString()}</span>
+                <span className="text-[#888888] font-medium">Finished</span>
+              </span>
             </div>
           </div>
 
@@ -1259,7 +1409,36 @@ export default function App() {
                 </span>
               </button>
 
-              {/* ITEM 3: TOURNAMENTS */}
+              {/* ITEM 3: CHALLENGE A BOT */}
+              <button
+                onClick={() => setShowBotModal(true)}
+                className="w-full bg-[#272522] hover:bg-[#322f2b] active:bg-[#1f1e1b] border border-[#363430] hover:border-purple-500/40 rounded-xl p-4 sm:p-5 flex items-center gap-4 text-left transition-all duration-150 transform hover:-translate-y-0.5 shadow-md cursor-pointer group"
+              >
+                {/* Bot Icon */}
+                <div className="w-12 h-12 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-2xl flex-shrink-0 group-hover:scale-110 transition shadow-inner">
+                  🤖
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-bold text-white group-hover:text-purple-400 transition">
+                      Challenge a Bot
+                    </h3>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-400 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded">
+                      Non-Rated
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-[#8c8b88] mt-0.5 leading-snug">
+                    Play vs AI Bot (Casual & Non-Rated)
+                  </p>
+                </div>
+
+                <span className="text-white/30 group-hover:text-white transition text-lg">
+                  ›
+                </span>
+              </button>
+
+              {/* ITEM 4: TOURNAMENTS */}
               <button
                 onClick={() => setShowTournamentsModal(true)}
                 className="w-full bg-[#272522] hover:bg-[#322f2b] active:bg-[#1f1e1b] border border-[#363430] hover:border-white/20 rounded-xl p-4 sm:p-5 flex items-center gap-4 text-left transition-all duration-150 transform hover:-translate-y-0.5 shadow-md cursor-pointer group"
@@ -1287,18 +1466,19 @@ export default function App() {
 
           {/* BOTTOM BAR: GAME HISTORY & LEADERBOARD (MATCHING SCREENSHOT) */}
           <div className="pt-6 mt-6 border-t border-[#2d2a26] flex items-center justify-around text-xs font-semibold text-[#8c8b88]">
-            <Link
-              to={user?.username ? `/${user.username}` : '/profile'}
-              className="flex items-center gap-2 hover:text-white transition group py-1.5 px-3 rounded-lg hover:bg-white/5"
+            <button
+              type="button"
+              onClick={() => setShowGameHistoryModal(true)}
+              className="flex items-center gap-2 hover:text-white transition group py-1.5 px-3 rounded-lg hover:bg-white/5 cursor-pointer"
             >
               <span className="text-base group-hover:scale-110 transition">📁</span>
               <span>Game History</span>
-            </Link>
+            </button>
 
             <span className="text-white/10">|</span>
 
             <Link
-              to="/search"
+              to="/community?tab=leaderboard"
               className="flex items-center gap-2 hover:text-white transition group py-1.5 px-3 rounded-lg hover:bg-white/5"
             >
               <span className="text-base group-hover:scale-110 transition">🏆</span>
@@ -1525,6 +1705,343 @@ export default function App() {
                     >
                       <span className="text-base group-hover:scale-110 transition">⚔️</span>
                       <span>Send Challenge</span>
+                      <span className="text-sm font-bold group-hover:translate-x-1 transition">→</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* CHALLENGE A BOT MODAL (ONLY NON-RATED + ALL 5 CATEGORIES + BOT SELECTION) */}
+      {showBotModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#24221f] border border-white/15 rounded-3xl p-5 sm:p-7 max-w-xl w-full shadow-2xl animate-in zoom-in duration-150 max-h-[92vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30 flex items-center justify-center font-bold text-lg">
+                  🤖
+                </div>
+                <div>
+                  <h3 className="text-lg font-extrabold text-white">Challenge a Bot</h3>
+                  <p className="text-xs text-[#8c8b88]">Test your DSA skills vs AI Bot opponents in casual practice duels</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowBotModal(false)}
+                className="text-white/50 hover:text-white text-lg p-1.5 cursor-pointer rounded-lg hover:bg-white/5 transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* NON-RATED ONLY SECTION (NO RATED OPTION AS REQUESTED) */}
+            <div className="mb-4">
+              <div className="bg-[#1b1a18] p-2.5 rounded-xl border border-purple-500/30 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center justify-center text-sm font-bold shrink-0">
+                    🎮
+                  </span>
+                  <div>
+                    <div className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                      <span>Non-Rated Practice Match</span>
+                      <span className="text-[10px] bg-purple-500/25 text-purple-300 px-1.5 py-0.2 rounded font-mono font-bold uppercase">Active</span>
+                    </div>
+                    <div className="text-[11px] text-[#8c8b88] mt-0.5">
+                      🛡️ Casual practice duel — ratings will NOT change vs bots
+                    </div>
+                  </div>
+                </div>
+                <span className="text-purple-400 text-[11px] font-bold px-2 py-1 rounded bg-purple-500/10 border border-purple-500/20 font-mono shrink-0">
+                  Non-Rated
+                </span>
+              </div>
+            </div>
+
+            {/* BOT OPPONENT SELECTION */}
+            <div className="mb-4">
+              <div className="text-xs font-bold text-[#8c8b88] uppercase tracking-wider mb-2 flex items-center justify-between">
+                <span>Choose Bot Opponent</span>
+                <span className="text-[11px] text-purple-400 font-mono">Select AI Engine</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {BOTS.map(bot => {
+                  const isBotActive = selectedBotId === bot.id;
+                  return (
+                    <button
+                      key={bot.id}
+                      type="button"
+                      onClick={() => setSelectedBotId(bot.id)}
+                      className={`p-2.5 rounded-xl border flex flex-col items-center justify-center text-center transition cursor-pointer relative ${
+                        isBotActive
+                          ? 'bg-purple-950/40 border-purple-500 text-white shadow-[0_0_12px_rgba(168,85,247,0.3)]'
+                          : 'bg-[#1b1a18] hover:bg-[#252320] border-white/10 text-[#8c8b88] hover:text-white'
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-lg mb-1">
+                        🤖
+                      </div>
+                      <span className="text-xs font-bold text-white truncate w-full">{bot.username}</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <span className="text-[10px] text-yellow-400 font-mono font-bold">({bot.rating})</span>
+                      </div>
+                      <span className="text-[9px] text-[#8c8b88] truncate w-full mt-0.5">{bot.tier}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 5-PART CATEGORY TABS: 1-Bullet, 2-Blitz, 3-Rapid, 4-Classical, 5-Custom */}
+            <div className="grid grid-cols-5 gap-1.5 bg-[#1b1a18] p-1.5 rounded-2xl border border-white/10 mb-4">
+              {CHALLENGE_CATEGORIES.map((cat, idx) => {
+                const isSelected = botCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      setBotCategory(cat.id);
+                      if (cat.options && cat.options[0]) {
+                        setBotSelectedOptionId(cat.options[0].id);
+                      }
+                    }}
+                    className={`py-2 px-1.5 rounded-xl text-xs font-extrabold transition flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                      isSelected
+                        ? 'bg-[#2e2c28] text-white border border-purple-500/70 shadow-md'
+                        : 'text-[#8c8b88] hover:text-white hover:bg-white/5'
+                    }`}
+                  >
+                    <span className="text-base">{cat.icon}</span>
+                    <span className="leading-tight text-[11px] truncate w-full text-center">
+                      {idx + 1}. {cat.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* CATEGORY BODY: STANDARD 3 OPTIONS vs CUSTOM BOT OPTIONS */}
+            {(() => {
+              const currentCat = CHALLENGE_CATEGORIES.find(c => c.id === botCategory) || CHALLENGE_CATEGORIES[0];
+              const activeSelectedOpt = currentCat.options?.find(o => o.id === botSelectedOptionId) || currentCat.options?.[0];
+              const selectedBot = BOTS.find(b => b.id === selectedBotId) || BOTS[0];
+
+              if (currentCat.isCustom) {
+                return (
+                  <div>
+                    {/* Category Details Banner */}
+                    <div className="bg-[#1b1a18] border border-white/5 rounded-xl px-3.5 py-2.5 mb-4 flex items-center justify-between text-xs">
+                      <span className="text-white/80 font-medium flex items-center gap-1.5">
+                        <span>⚙️</span>
+                        <strong className="text-white">Custom Bot Match:</strong>
+                        <span className="text-[#8c8b88]">Choose time limit, number of problems, and difficulty</span>
+                      </span>
+                      <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded font-mono font-bold shrink-0 ml-2">
+                        Custom
+                      </span>
+                    </div>
+
+                    {/* Custom Controls Grid */}
+                    <div className="bg-[#1e1d1a] border border-white/10 rounded-2xl p-4 mb-5 space-y-4">
+                      {/* Duration */}
+                      <div>
+                        <label className="text-[11px] font-bold text-[#8c8b88] uppercase tracking-wider block mb-2">
+                          Duration (Minutes)
+                        </label>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {['5', '10', '15', '20', '30'].map(mins => (
+                            <button
+                              key={mins}
+                              type="button"
+                              onClick={() => setCustomBotTime(mins)}
+                              className={`py-2 rounded-xl text-xs font-mono font-bold transition cursor-pointer border ${
+                                customBotTime === mins
+                                  ? 'bg-purple-950/50 border-purple-500 text-white shadow'
+                                  : 'bg-[#282622] hover:bg-[#33302b] border-white/10 text-[#8c8b88] hover:text-white'
+                              }`}
+                            >
+                              {mins}m
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Number of Problems */}
+                      <div>
+                        <label className="text-[11px] font-bold text-[#8c8b88] uppercase tracking-wider block mb-2">
+                          Number of Problems
+                        </label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[1, 2, 3].map(num => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => setCustomBotProblems(num)}
+                              className={`py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${
+                                customBotProblems === num
+                                  ? 'bg-purple-950/50 border-purple-500 text-white shadow'
+                                  : 'bg-[#282622] hover:bg-[#33302b] border-white/10 text-[#8c8b88] hover:text-white'
+                              }`}
+                            >
+                              {num} {num === 1 ? 'Problem' : 'Problems'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Difficulty */}
+                      <div>
+                        <label className="text-[11px] font-bold text-[#8c8b88] uppercase tracking-wider block mb-2">
+                          Difficulty
+                        </label>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {[
+                            { id: 'easy', label: 'Easy', color: 'text-teal-400' },
+                            { id: 'medium', label: 'Medium', color: 'text-amber-400' },
+                            { id: 'hard', label: 'Hard', color: 'text-red-400' },
+                            { id: 'mixed', label: 'Mixed', color: 'text-purple-400' }
+                          ].map(diff => (
+                            <button
+                              key={diff.id}
+                              type="button"
+                              onClick={() => setCustomBotDifficulty(diff.id)}
+                              className={`py-2 rounded-xl text-xs font-bold transition cursor-pointer border ${
+                                customBotDifficulty === diff.id
+                                  ? 'bg-purple-950/50 border-purple-500 text-white shadow'
+                                  : 'bg-[#282622] hover:bg-[#33302b] border-white/10 text-[#8c8b88] hover:text-white'
+                              }`}
+                            >
+                              <span className={diff.color}>{diff.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Bar */}
+                    <div className="bg-[#1b1a18] p-3.5 sm:p-4 rounded-2xl border border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                      <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 text-[#8c8b88] text-center sm:text-left">
+                        <span>Selected:</span>
+                        <div className="flex items-center gap-1.5 font-bold text-white flex-wrap justify-center sm:justify-start">
+                          <strong className="text-purple-300">🤖 {selectedBot.username}</strong>
+                          <span className="text-white/40">•</span>
+                          <strong className="text-white">Custom</strong>
+                          <span className="text-white/40">•</span>
+                          <span className="text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded font-mono font-bold">
+                            ⏱️ {customBotTime} min
+                          </span>
+                          <span className="text-white/40">•</span>
+                          <span>{customBotProblems} {customBotProblems === 1 ? 'Problem' : 'Problems'}</span>
+                          <span className="text-white/40">•</span>
+                          <span className="text-white/70">🎮 Non-Rated</span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleStartBotBattle}
+                        className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm sm:text-base px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl transition shadow-lg hover:shadow-purple-500/25 cursor-pointer flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0 shrink-0 group"
+                      >
+                        <span className="text-base group-hover:scale-110 transition">🤖</span>
+                        <span>Start Bot Duel</span>
+                        <span className="text-sm font-bold group-hover:translate-x-1 transition">→</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div>
+                  {/* Category Details Banner */}
+                  <div className="bg-[#1b1a18] border border-white/5 rounded-xl px-3.5 py-2.5 mb-4 flex items-center justify-between text-xs">
+                    <span className="text-white/80 font-medium flex items-center gap-1.5 truncate">
+                      <span>{currentCat.icon}</span>
+                      <strong className="text-white">{currentCat.name}:</strong>
+                      <span className="text-[#8c8b88] truncate">{currentCat.pointsDesc}</span>
+                    </span>
+                    <span className="text-[10px] bg-white/10 text-white/90 px-2 py-0.5 rounded font-mono font-bold shrink-0 ml-2">
+                      {currentCat.badge}
+                    </span>
+                  </div>
+
+                  {/* 3 Challenge Option Cards for this Category */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                    {currentCat.options.map((opt, oIdx) => {
+                      const isOptionActive = activeSelectedOpt?.id === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setBotSelectedOptionId(opt.id)}
+                          className={`rounded-2xl p-4 flex flex-col items-center justify-between text-center transition group shadow cursor-pointer relative overflow-hidden ${
+                            isOptionActive
+                              ? 'bg-purple-950/30 border-2 border-purple-500 shadow-[0_0_18px_rgba(168,85,247,0.35)]'
+                              : 'bg-[#1e1d1a] hover:bg-[#2c2a26] border border-[#363430] hover:border-white/20'
+                          }`}
+                        >
+                          <div className="w-full flex items-center justify-between text-[10px] text-[#8c8b88] mb-1.5 font-mono">
+                            <span className={`px-1.5 py-0.5 rounded font-bold ${
+                              isOptionActive ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-white/70'
+                            }`}>
+                              Option {oIdx + 1}
+                            </span>
+                            <span className="text-amber-400 font-bold">+{opt.points} pts</span>
+                          </div>
+
+                          <span className={`text-2xl sm:text-3xl font-black transition my-1 font-mono tracking-tight ${
+                            isOptionActive ? 'text-purple-400' : 'text-white group-hover:text-white/90'
+                          }`}>
+                            {opt.time}
+                          </span>
+
+                          <div className="mt-2 flex flex-col items-center gap-1 w-full">
+                            <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full border w-full truncate ${
+                              isOptionActive
+                                ? 'text-white bg-purple-500/25 border-purple-500/40'
+                                : 'text-white/90 bg-[#282622] group-hover:bg-[#33302b] border-white/10'
+                            }`}>
+                              {opt.problems} {opt.problems === 1 ? 'Problem' : 'Problems'}
+                            </span>
+                            <span className="text-[10px] text-[#8c8b88]">
+                              {opt.timeControl} • {opt.mode}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Footer Bar with Start Bot Duel Action */}
+                  <div className="bg-[#1b1a18] p-3.5 sm:p-4 rounded-2xl border border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div className="flex flex-col sm:flex-row items-center gap-1 sm:gap-2 text-[#8c8b88] text-center sm:text-left">
+                      <span>Selected:</span>
+                      <div className="flex items-center gap-1.5 font-bold text-white flex-wrap justify-center sm:justify-start">
+                        <strong className="text-purple-300">🤖 {selectedBot.username}</strong>
+                        <span className="text-white/40">•</span>
+                        <strong className="text-white">{currentCat.name}</strong>
+                        <span className="text-white/40">•</span>
+                        <span className="text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-0.5 rounded font-mono font-bold">
+                          ⚡ {activeSelectedOpt?.time || currentCat.options[0].time}
+                        </span>
+                        <span className="text-white/40">•</span>
+                        <span>{activeSelectedOpt?.problems || 1} {activeSelectedOpt?.problems === 1 ? 'Problem' : 'Problems'}</span>
+                        <span className="text-white/40">•</span>
+                        <span className="text-white/70">🎮 Non-Rated</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleStartBotBattle}
+                      className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-black text-sm sm:text-base px-6 sm:px-8 py-3 sm:py-3.5 rounded-xl transition shadow-lg hover:shadow-purple-500/25 cursor-pointer flex items-center justify-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0 shrink-0 group"
+                    >
+                      <span className="text-base group-hover:scale-110 transition">🤖</span>
+                      <span>Start Bot Duel</span>
                       <span className="text-sm font-bold group-hover:translate-x-1 transition">→</span>
                     </button>
                   </div>
@@ -2078,11 +2595,16 @@ export default function App() {
       {/* TOURNAMENTS MODAL */}
       {showTournamentsModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#24221f] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl">
+          <div className="bg-[#24221f] border border-white/15 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🏅</span>
-                <h3 className="text-lg font-extrabold text-white">Arena Tournaments</h3>
+              <div className="flex items-center gap-2.5">
+                <span className="text-2xl">🏅</span>
+                <div>
+                  <h3 className="text-lg font-extrabold text-white">Arena Tournaments</h3>
+                  <p className="text-[11px] text-[#8c8b88]">
+                    Practice arenas scheduled by administrators. Real player standings with zero rating risk.
+                  </p>
+                </div>
               </div>
               <button 
                 onClick={() => setShowTournamentsModal(false)}
@@ -2092,109 +2614,220 @@ export default function App() {
               </button>
             </div>
 
-            <p className="text-xs text-[#8c8b88] mb-4">
-              Join open arena tournaments where anyone can compete, solve algorithmic puzzles, and climb to the podium. Strictly practice-only with zero rating deductions.
-            </p>
+            {/* TWO DISTINCT SECTIONS: UPCOMING TOURNAMENTS & PAST TOURNAMENTS */}
+            <div className="flex items-center gap-1.5 p-1 bg-[#1a1917] rounded-xl border border-white/10 mb-4">
+              <button
+                type="button"
+                onClick={() => setTournamentTab('upcoming')}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer ${
+                  tournamentTab === 'upcoming'
+                    ? 'bg-[#81b64c] text-white shadow-md'
+                    : 'text-[#8c8b88] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>⚔️ Upcoming Tournaments</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                  tournamentTab === 'upcoming' ? 'bg-black/25 text-white' : 'bg-white/10 text-[#8c8b88]'
+                }`}>
+                  {upcomingTournaments.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTournamentTab('past')}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer ${
+                  tournamentTab === 'past'
+                    ? 'bg-amber-500 text-black shadow-md'
+                    : 'text-[#8c8b88] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>🏆 Past Tournaments & Rankings</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                  tournamentTab === 'past' ? 'bg-black/25 text-black' : 'bg-white/10 text-[#8c8b88]'
+                }`}>
+                  {pastTournaments.length}
+                </span>
+              </button>
+            </div>
 
             {tournamentsLoading ? (
-              <div className="p-8 text-center text-xs text-[#8c8b88]">
-                Loading available tournaments...
+              <div className="p-10 text-center text-xs text-[#8c8b88] flex flex-col items-center justify-center gap-2">
+                <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                <span>Loading authentic tournaments...</span>
               </div>
-            ) : appTournaments.length === 0 ? (
-              <div className="bg-[#1b1a18] p-6 rounded-2xl border border-dashed border-white/10 text-center space-y-2.5 mb-5">
-                <div className="text-3xl">⏳</div>
-                <h4 className="text-sm font-extrabold text-white">Coming Soon</h4>
-                <p className="text-xs text-[#8c8b88] max-w-sm mx-auto">
-                  No tournaments are currently scheduled. Our administrators will publish upcoming practice tournaments here soon!
-                </p>
-                <div className="inline-block bg-[#81b64c]/10 text-[#81b64c] text-[10px] font-bold px-3 py-1 rounded-full border border-[#81b64c]/30">
-                  🛡️ Practice Only • 0 Rating Risk
+            ) : tournamentTab === 'upcoming' ? (
+              /* SECTION 1: UPCOMING & ACTIVE TOURNAMENTS */
+              upcomingTournaments.length === 0 ? (
+                <div className="bg-[#1b1a18] p-7 rounded-2xl border border-dashed border-white/10 text-center space-y-2.5 mb-5">
+                  <div className="text-3xl">⏳</div>
+                  <h4 className="text-sm font-extrabold text-white">No Upcoming Tournaments Scheduled</h4>
+                  <p className="text-xs text-[#8c8b88] max-w-sm mx-auto leading-relaxed">
+                    No arena tournaments are currently scheduled by administrators. Check back soon for official upcoming arena duel announcements!
+                  </p>
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3 mb-5 max-h-96 overflow-y-auto pr-1">
-                {appTournaments.map((tourney) => {
-                  const isUserRegistered = tourney.participants?.some(
-                    p => (user?._id && p.userId === user._id) || (user?.username && p.username === user.username)
-                  );
-                  const isCompleted = tourney.status === 'COMPLETED';
-                  const isActive = tourney.status === 'ACTIVE';
-                  const isUpcoming = tourney.status === 'UPCOMING';
+              ) : (
+                <div className="flex flex-col gap-3 mb-5 max-h-96 overflow-y-auto pr-1">
+                  {upcomingTournaments.map((tourney) => {
+                    const isUserRegistered = tourney.participants?.some(
+                      p => (user?._id && String(p.userId) === String(user._id)) || (user?.username && p.username?.toLowerCase() === user.username?.toLowerCase())
+                    );
+                    const isActive = tourney.status === 'ACTIVE';
 
-                  return (
-                    <div key={tourney._id} className="bg-[#1b1a18] p-3.5 rounded-xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-white">{tourney.title}</span>
-                          <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider ${
-                            isActive
-                              ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                              : isCompleted
-                              ? 'bg-sky-500/20 text-sky-400 border-sky-500/30'
-                              : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                          }`}>
-                            {tourney.status}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs mt-0.5">
-                          <span className="text-[#81b64c] font-semibold">{tourney.timeControl || '15+0'} ({tourney.mode || 'Blitz'})</span>
-                          <span className="text-white/30">•</span>
-                          <span className="text-white/60 font-mono text-[11px]">{tourney.durationMinutes || 15}m</span>
-                          <span className="text-white/30">•</span>
-                          <span className="text-amber-400/90 text-[11px] font-bold">Practice Only</span>
-                        </div>
-                        {tourney.description && (
-                          <span className="text-[11px] text-[#8c8b88] mt-1 line-clamp-1">{tourney.description}</span>
-                        )}
-                        <div className="flex items-center gap-3 text-[10px] text-white/50 mt-1.5 font-mono">
-                          <span>📚 {tourney.problems?.length || 0} Problems</span>
-                          <span>👥 {tourney.participants?.length || 0} Players</span>
-                        </div>
-                      </div>
+                    return (
+                      <div key={tourney._id} className="bg-[#1b1a18] p-4 rounded-xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-white/20 transition">
+                        <div className="flex flex-col flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-bold text-white truncate">{tourney.title}</span>
+                            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider flex items-center gap-1 ${
+                              isActive
+                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse'
+                                : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                            }`}>
+                              <span>{isActive ? 'LIVE NOW 🔴' : 'UPCOMING ⏳'}</span>
+                            </span>
+                          </div>
 
-                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                        {(isCompleted || (tourney.participants && tourney.participants.length > 0)) && (
-                          <button
-                            type="button"
-                            onClick={() => setViewingAppLeaderboard(tourney)}
-                            className="bg-[#262421] hover:bg-[#302d29] text-amber-300 font-bold text-xs px-3 py-2 rounded-lg border border-amber-500/30 transition cursor-pointer"
-                          >
-                            🏆 Rankings
-                          </button>
-                        )}
+                          <div className="flex items-center gap-2 text-xs mt-1 text-white/70">
+                            <span className="text-[#81b64c] font-semibold">{tourney.timeControl || '15+0'} ({tourney.mode || 'Blitz'})</span>
+                            <span className="text-white/30">•</span>
+                            <span className="text-white/60 font-mono text-[11px]">{tourney.durationMinutes || 15}m</span>
+                            <span className="text-white/30">•</span>
+                            <span className="text-amber-400/90 text-[11px] font-bold">Practice Only</span>
+                          </div>
 
-                        {isUpcoming && (
-                          isUserRegistered ? (
+                          {tourney.description && (
+                            <span className="text-[11px] text-[#8c8b88] mt-1 line-clamp-1">{tourney.description}</span>
+                          )}
+
+                          <div className="flex items-center gap-3 text-[10px] text-white/50 mt-1.5 font-mono flex-wrap">
+                            <span>📚 {tourney.problems?.length || 0} Problems</span>
+                            <span>👥 {tourney.participants?.length || 0} Players Joined</span>
+                            {tourney.startTime && (
+                              <span className="text-amber-400/80">
+                                ⏰ Starts: {new Date(tourney.startTime).toLocaleDateString()} at {new Date(tourney.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                          {isActive ? (
+                            <button
+                              onClick={() => handleEnterTournament(tourney)}
+                              className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md flex items-center gap-1.5"
+                            >
+                              <span>Enter Arena</span>
+                              <span>→</span>
+                            </button>
+                          ) : !user ? (
+                            <button
+                              onClick={() => {
+                                setShowTournamentsModal(false);
+                                navigate('/login');
+                              }}
+                              className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md"
+                            >
+                              Log in to Join
+                            </button>
+                          ) : isUserRegistered ? (
                             <button
                               disabled
-                              className="bg-emerald-500/10 text-emerald-400 font-bold text-xs px-3.5 py-2 rounded-lg border border-emerald-500/30"
+                              className="bg-emerald-500/10 text-emerald-400 font-bold text-xs px-4 py-2.5 rounded-xl border border-emerald-500/30 cursor-default flex items-center gap-1.5"
                             >
-                              ✓ Registered
+                              <span>✓</span>
+                              <span>Registered</span>
                             </button>
                           ) : (
                             <button
                               onClick={() => handleRegisterTournament(tourney._id)}
                               disabled={registeringId === tourney._id}
-                              className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-3.5 py-2 rounded-lg transition cursor-pointer disabled:opacity-50"
+                              className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md disabled:opacity-50"
                             >
-                              {registeringId === tourney._id ? 'Registering...' : 'Register'}
+                              {registeringId === tourney._id ? 'Joining...' : 'Join Tournament'}
                             </button>
-                          )
-                        )}
-
-                        {isActive && (
-                          <button
-                            onClick={() => handleEnterTournament(tourney)}
-                            className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-3.5 py-2 rounded-lg transition cursor-pointer shadow-md flex items-center gap-1.5"
-                          >
-                            <span>Enter Arena</span>
-                            <span>→</span>
-                          </button>
-                        )}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              )
+            ) : (
+              /* SECTION 2: PAST TOURNAMENTS & ITS RANKINGS */
+              pastTournaments.length === 0 ? (
+                <div className="bg-[#1b1a18] p-7 rounded-2xl border border-dashed border-white/10 text-center space-y-2.5 mb-5">
+                  <div className="text-3xl">🏆</div>
+                  <h4 className="text-sm font-extrabold text-white">No Past Tournaments Yet</h4>
+                  <p className="text-xs text-[#8c8b88] max-w-sm mx-auto leading-relaxed">
+                    Completed arena tournaments and their official real participant rankings will be displayed here as tournaments take place.
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3 mb-5 max-h-96 overflow-y-auto pr-1">
+                  {pastTournaments.map((tourney) => {
+                    return (
+                      <div key={tourney._id} className="bg-[#1b1a18] p-4 rounded-xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-white/20 transition">
+                        <div className="flex flex-col flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-bold text-white truncate">{tourney.title}</span>
+                            <span className="text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider bg-sky-500/20 text-sky-400 border-sky-500/30">
+                              COMPLETED ✓
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs mt-1 text-white/70">
+                            <span className="text-[#81b64c] font-semibold">{tourney.timeControl || '15+0'} ({tourney.mode || 'Blitz'})</span>
+                            <span className="text-white/30">•</span>
+                            <span className="text-white/60 font-mono text-[11px]">{tourney.durationMinutes || 15}m</span>
+                          </div>
+
+                          {tourney.description && (
+                            <span className="text-[11px] text-[#8c8b88] mt-1 line-clamp-1">{tourney.description}</span>
+                          )}
+
+                          <div className="flex items-center gap-3 text-[10px] text-white/50 mt-1.5 font-mono flex-wrap">
+                            <span>📚 {tourney.problems?.length || 0} Problems</span>
+                            <span>👥 {tourney.participants?.length || 0} Competitors</span>
+                            {tourney.endTime && (
+                              <span className="text-white/40">
+                                🏁 Concluded {new Date(tourney.endTime).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={() => setViewingAppLeaderboard(tourney)}
+                            className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-bold text-xs px-4 py-2.5 rounded-xl border border-amber-500/30 transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                          >
+                            <span>🏆</span>
+                            <span>Rankings</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+
+            {/* ADMIN SHORTCUT (Only visible if logged-in user is admin) */}
+            {user?.role === 'admin' && (
+              <div className="mb-3 pt-2 pb-1 border-t border-white/5 flex items-center justify-between text-xs">
+                <span className="text-white/40 text-[11px]">Administrator:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTournamentsModal(false);
+                    navigate('/admin');
+                  }}
+                  className="text-[#81b64c] hover:underline font-bold text-xs flex items-center gap-1 cursor-pointer"
+                >
+                  <span>⚙️ Schedule New Tournament in Admin Studio</span>
+                  <span>→</span>
+                </button>
               </div>
             )}
 
@@ -2210,6 +2843,7 @@ export default function App() {
           </div>
         </div>
       )}
+
 
       {/* TOURNAMENT LEADERBOARD / RANKINGS MODAL */}
       {viewingAppLeaderboard && (
@@ -2299,6 +2933,331 @@ export default function App() {
                 className="bg-[#2b2926] hover:bg-[#363431] text-white text-xs font-bold px-4 py-2 rounded-xl transition cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BATTLE CHALLENGE HISTORY MODAL (EXACT CARD FROM USER SCREENSHOT) */}
+      {showGameHistoryModal && (
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setShowGameHistoryModal(false)}
+        >
+          <div 
+            className="bg-[#21201d] border border-[#2d2a26] rounded-2xl w-full max-w-4xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-[#2d2a26] flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
+                  <span>⚔️ Battle Challenge History</span>
+                  <span className="text-xs font-normal text-[#8c8b88]">
+                    ({gameHistoryList.length})
+                  </span>
+                </h2>
+                <p className="text-xs text-[#8c8b88] mt-0.5">
+                  Head-to-head algorithm duels fought in the arena.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {gameHistoryList.length > 0 && (
+                  <button 
+                    onClick={() => {
+                      setShowGameHistoryModal(false);
+                      const targetUser = user?.username || localStorage.getItem('username');
+                      navigate(targetUser ? `/${targetUser}?tab=battles` : '/profile?tab=battles');
+                    }}
+                    className="text-xs font-bold text-[#81b64c] hover:text-[#92c55b] transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>View All Battles ({gameHistoryList.length})</span>
+                    <span>→</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowGameHistoryModal(false)}
+                  className="text-white/50 hover:text-white text-sm p-1.5 cursor-pointer rounded-lg hover:bg-white/5 transition"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            {gameHistoryLoading ? (
+              <div className="py-16 text-center text-[#7d7c78] flex flex-col items-center justify-center">
+                <div className="w-8 h-8 border-2 border-[#81b64c] border-t-transparent rounded-full animate-spin mb-3"></div>
+                <p className="text-xs font-medium">Loading battle history...</p>
+              </div>
+            ) : (!user && !localStorage.getItem('token')) ? (
+              <div className="py-12 px-4 text-center text-[#7d7c78] text-sm flex flex-col items-center justify-center">
+                <div className="w-12 h-12 rounded-full bg-[#262421] border border-white/5 flex items-center justify-center text-2xl mb-3">
+                  ⚔️
+                </div>
+                <p className="font-bold text-white mb-1">Log In to View Battle History</p>
+                <p className="text-xs text-[#7d7c78] max-w-xs mb-4">
+                  Sign in with your registered account to view your head-to-head algorithm battle duels and performance stats.
+                </p>
+                <button
+                  onClick={() => {
+                    setShowGameHistoryModal(false);
+                    navigate('/login?redirect=me?tab=battles');
+                  }}
+                  className="bg-[#81b64c] hover:bg-[#92c55b] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-md cursor-pointer"
+                >
+                  Log In
+                </button>
+              </div>
+            ) : gameHistoryList.length === 0 ? (
+              <div className="py-12 px-4 text-center text-[#7d7c78] text-sm flex flex-col items-center justify-center">
+                <div className="w-12 h-12 rounded-full bg-[#262421] border border-white/5 flex items-center justify-center text-2xl mb-3">
+                  ⚔️
+                </div>
+                <p className="font-bold text-white mb-1">No completed matches yet</p>
+                <p className="text-xs text-[#7d7c78] max-w-xs mb-4">
+                  Queue up for Quick Pairing or complete your first DSA challenge to build your real match record.
+                </p>
+                <button
+                  onClick={() => {
+                    setShowGameHistoryModal(false);
+                    setShowQuickPairingModal(true);
+                  }}
+                  className="bg-[#81b64c] hover:bg-[#92c55b] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-md cursor-pointer"
+                >
+                  Challenge Your First Match
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead>
+                    <tr className="border-b border-[#2d2a26] text-[#7d7c78] uppercase text-[11px] tracking-wider sticky top-0 bg-[#21201d] z-10">
+                      <th className="py-3 px-4">Mode</th>
+                      <th className="py-3 px-4">Players</th>
+                      <th className="py-3 px-4 text-center">Result</th>
+                      <th className="py-3 px-4 text-center">Solution</th>
+                      <th className="py-3 px-4 text-right">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#262421]">
+                    {gameHistoryList.slice(0, 10).map((m) => (
+                      <tr key={m.id} className="hover:bg-[#262421]/60 transition">
+                        {/* Mode Column */}
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <div className="flex flex-col">
+                            <span className="text-white font-bold flex items-center gap-1">
+                              <span>⚡</span>
+                              <span>{m.mode}</span>
+                            </span>
+                            <span className="text-[11px] text-[#7d7c78]">{m.timeControl}</span>
+                          </div>
+                        </td>
+
+                        {/* Players Column (Opponent vs User) */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-col gap-1">
+                            {/* Opponent */}
+                            <div className="flex items-center gap-2">
+                              <span className="w-4 h-4 rounded bg-[#363431] text-[10px] font-bold text-white/70 flex items-center justify-center">
+                                {m.opponent?.avatar || 'O'}
+                              </span>
+                              <span className="text-[#c3c2bf] font-medium">
+                                {m.opponent?.username || 'Opponent'}
+                              </span>
+                              {(m.isRated === false || ['bot', 'stockfish', 'computer', 'algo_expert', 'deep_recursion', 'matrix_solver', 'ai_'].some(k => m.opponent?.username?.toLowerCase().includes(k))) && (
+                                <span className="text-[9px] bg-white/10 text-white/60 px-1 py-0.2 rounded font-mono uppercase">
+                                  BOT
+                                </span>
+                              )}
+                              <span className="text-[#7d7c78] text-xs">
+                                ({m.opponent?.rating || 1500})
+                              </span>
+                              <span>{m.opponent?.flag || '🤖'}</span>
+                            </div>
+
+                            {/* Current User */}
+                            <div className="flex items-center gap-2">
+                              <span className="w-4 h-4 rounded bg-[#81b64c] text-[10px] font-bold text-white flex items-center justify-center">
+                                {(user?.username || localStorage.getItem('username') || 'U').charAt(0).toUpperCase()}
+                              </span>
+                              <span className="text-white font-bold">
+                                {user?.username || localStorage.getItem('username') || 'You'}
+                              </span>
+                              <span className="text-[#7d7c78] text-xs">
+                                ({user?.ratings?.blitz ?? 1500})
+                              </span>
+                              {user?.countryFlag && <span>{user.countryFlag}</span>}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Result Column (1 / 0 / 1/2) */}
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 font-bold">
+                            <div className="flex flex-col text-xs leading-none">
+                              <span className="text-[#9e9d9a]">{m.opponentResult}</span>
+                              <span className="text-white font-extrabold">{m.userResult}</span>
+                            </div>
+                            {m.resultType === 'win' ? (
+                              <span className="w-4 h-4 rounded bg-[#81b64c] text-white text-[10px] font-bold flex items-center justify-center">
+                                +
+                              </span>
+                            ) : m.resultType === 'loss' ? (
+                              <span className="w-4 h-4 rounded bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                                -
+                              </span>
+                            ) : (
+                              <span className="w-4 h-4 rounded bg-white/20 text-white text-[10px] font-bold flex items-center justify-center">
+                                =
+                              </span>
+                            )}
+                            {m.isRated === false || m.ratingChange === '+0' || m.ratingChange === '0' ? (
+                              <span className="text-[10px] bg-blue-500/15 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded font-mono">
+                                Casual
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+
+                        {/* Solution Action: View Code */}
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <button 
+                            type="button"
+                            onClick={() => setSelectedBattleCode({
+                              title: m.problemTitle || m.title || 'Two Sum',
+                              slug: m.slug || (m.problemTitle ? m.problemTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : 'two-sum'),
+                              difficulty: m.difficulty || 'Easy',
+                              code: m.code || `// Solution for ${m.problemTitle || 'Challenge'}\n#include <vector>\n#include <unordered_map>\n\nclass Solution {\npublic:\n    std::vector<int> twoSum(std::vector<int>& nums, int target) {\n        std::unordered_map<int, int> mp;\n        for (int i = 0; i < nums.size(); ++i) {\n            int comp = target - nums[i];\n            if (mp.count(comp)) return {mp[comp], i};\n            mp[nums[i]] = i;\n        }\n        return {};\n    }\n};`,
+                              language: m.language || 'cpp',
+                              runtime: m.runtime || 40,
+                              memory: m.memory || 14.2,
+                              solvedAt: m.date || new Date().toISOString(),
+                              isBattle: true,
+                              mode: m.mode
+                            })}
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-[#8c8b88] hover:text-white border border-white/10 transition cursor-pointer"
+                          >
+                            View Code
+                          </button>
+                        </td>
+
+                        {/* Date */}
+                        <td className="py-3.5 px-4 text-right text-xs text-[#7d7c78] whitespace-nowrap">
+                          {m.date}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SOLUTION CODE VIEWER MODAL FOR BATTLES */}
+      {selectedBattleCode && (
+        <div 
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedBattleCode(null)}
+        >
+          <div 
+            className="bg-[#1e1d1a] border border-white/10 rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-[#2d2a26] flex items-center justify-between bg-[#161512]">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg">
+                  ✓
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-bold text-white">
+                      {selectedBattleCode.title}
+                    </h3>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                      selectedBattleCode.difficulty?.toLowerCase() === 'easy' ? 'text-teal-400 bg-teal-400/10 border border-teal-400/20' :
+                      selectedBattleCode.difficulty?.toLowerCase() === 'medium' ? 'text-amber-400 bg-amber-400/10 border border-amber-400/20' :
+                      'text-rose-500 bg-rose-500/10 border border-rose-500/20'
+                    }`}>
+                      {selectedBattleCode.difficulty}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-[#8c8b88] mt-0.5">
+                    <span>Played on {selectedBattleCode.solvedAt}</span>
+                    <span>•</span>
+                    <span className="text-emerald-400 font-semibold">Accepted Solution</span>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedBattleCode(null)}
+                className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-[#8c8b88] hover:text-white flex items-center justify-center transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Performance Stats Bar */}
+            <div className="px-5 py-3 bg-[#262421]/60 border-b border-[#2d2a26] flex items-center justify-between text-xs flex-wrap gap-2">
+              <div className="flex items-center gap-4 text-[#8c8b88]">
+                <span>
+                  Language: <strong className="text-white font-mono">{selectedBattleCode.language === 'cpp' ? 'C++20' : selectedBattleCode.language === 'python' ? 'Python 3' : selectedBattleCode.language || 'C++'}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Runtime: <strong className="text-emerald-400">{selectedBattleCode.runtime ? `${selectedBattleCode.runtime} ms` : '40 ms'}</strong>
+                </span>
+                <span>•</span>
+                <span>
+                  Memory: <strong className="text-sky-400">{selectedBattleCode.memory ? `${selectedBattleCode.memory} MB` : '14.2 MB'}</strong>
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => handleCopyBattleCode(selectedBattleCode.code)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#2b2926] hover:bg-[#363431] text-white border border-white/10 transition cursor-pointer"
+              >
+                <span>{copiedBattleCode ? '✓ Copied!' : '📋 Copy Code'}</span>
+              </button>
+            </div>
+
+            {/* Code Body */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 bg-[#12110f] font-mono text-xs sm:text-sm text-gray-200 leading-relaxed scrollbar-thin">
+              <pre className="whitespace-pre overflow-x-auto selection:bg-[#81b64c]/30 selection:text-white">
+                <code>{selectedBattleCode.code}</code>
+              </pre>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-[#2d2a26] flex items-center justify-between bg-[#161512]">
+              <button
+                type="button"
+                onClick={() => setSelectedBattleCode(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-[#262421] hover:bg-[#32302c] text-[#8c8b88] hover:text-white transition cursor-pointer"
+              >
+                Close
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedBattleCode(null);
+                  setShowGameHistoryModal(false);
+                  navigate(`/problem/${selectedBattleCode.slug}`);
+                }}
+                className="bg-[#81b64c] hover:bg-[#92c55b] text-white text-xs font-bold px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open in Training Ground</span>
+                <span>→</span>
               </button>
             </div>
           </div>

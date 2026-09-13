@@ -47,7 +47,101 @@ export default function AdminPanel() {
     { input: 'nums = [3,3], target = 6', output: '[0,1]' }
   ]);
 
-  const isAdmin = user && user.role === 'ADMIN';
+  const isAdmin = user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN');
+  const isSuperAdmin = user && user.role === 'SUPER_ADMIN';
+
+  // Users & Moderation State
+  const [usersList, setUsersList] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [userRoleFilter, setUserRoleFilter] = useState('ALL'); // ALL, ADMIN, USER, BANNED
+  const [userActionMsg, setUserActionMsg] = useState('');
+  const [userActionError, setUserActionError] = useState('');
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+
+  // Fetch all users for moderation
+  const fetchUsers = async () => {
+    const activeToken = token || localStorage.getItem('token');
+    if (!activeToken) return;
+    setUsersLoading(true);
+    try {
+      const res = await axios.get('http://localhost:5000/api/admin/users', {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (res.data) setUsersList(res.data);
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  // Toggle role: Only Super Admin can promote/demote
+  const handleToggleRole = async (targetUser) => {
+    if (!isSuperAdmin) {
+      alert('Only the Super Admin has the power to assign or remove Admin privileges.');
+      return;
+    }
+    const newRole = targetUser.role === 'ADMIN' ? 'USER' : 'ADMIN';
+    const confirmMsg = newRole === 'ADMIN'
+      ? `Promote @${targetUser.username} (${targetUser.displayName || targetUser.username}) to Administrator? They will be granted full access to create/edit problems and ban/unban users.`
+      : `Remove Administrator position from @${targetUser.username}? They will return to a standard Coder account.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const activeToken = token || localStorage.getItem('token');
+    setActionLoadingId(targetUser._id);
+    setUserActionMsg('');
+    setUserActionError('');
+    try {
+      const res = await axios.put(`http://localhost:5000/api/admin/users/${targetUser._id}/role`, {
+        role: newRole
+      }, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      setUserActionMsg(res.data.message || `Successfully updated role to ${newRole}`);
+      await fetchUsers();
+    } catch (err) {
+      setUserActionError(err.response?.data?.message || 'Failed to update user role');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  // Toggle ban: Admin & Super Admin
+  const handleToggleBan = async (targetUser) => {
+    const willBan = !targetUser.isBanned;
+    let reason = '';
+    if (willBan) {
+      const inputReason = window.prompt(
+        `Enter ban reason for @${targetUser.username}:`,
+        'Violation of platform guidelines / fair play'
+      );
+      if (inputReason === null) return;
+      reason = inputReason.trim() || 'Fair play violation';
+    } else {
+      if (!window.confirm(`Unban @${targetUser.username} and restore platform access?`)) return;
+    }
+
+    const activeToken = token || localStorage.getItem('token');
+    setActionLoadingId(targetUser._id);
+    setUserActionMsg('');
+    setUserActionError('');
+    try {
+      const res = await axios.put(`http://localhost:5000/api/admin/users/${targetUser._id}/ban`, {
+        banned: willBan,
+        reason
+      }, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      setUserActionMsg(res.data.message || (willBan ? `Banned @${targetUser.username}` : `Unbanned @${targetUser.username}`));
+      await fetchUsers();
+    } catch (err) {
+      setUserActionError(err.response?.data?.message || 'Failed to update ban status');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
 
   // Fetch problems from Admin API
   const fetchAdminProblems = async () => {
@@ -74,7 +168,7 @@ export default function AdminPanel() {
     }
   };
 
-  // Admin Tab: 'problems' | 'tournaments'
+  // Admin Tab: 'problems' | 'tournaments' | 'users'
   const [activeAdminTab, setActiveAdminTab] = useState('problems');
   const [tournaments, setTournaments] = useState([]);
   const [tournamentsLoading, setTournamentsLoading] = useState(false);
@@ -109,6 +203,7 @@ export default function AdminPanel() {
     if (isAdmin) {
       fetchAdminProblems();
       fetchTournaments();
+      fetchUsers();
     } else {
       setLoading(false);
     }
@@ -452,63 +547,71 @@ export default function AdminPanel() {
     return matchSearch && matchDiff;
   });
 
-  // IF USER IS NOT LOGGED IN AS ADMIN
+  // Filtered users for Moderation tab
+  const filteredUsers = usersList.filter((u) => {
+    const term = userSearchTerm.toLowerCase();
+    const matchSearch =
+      (u.username && u.username.toLowerCase().includes(term)) ||
+      (u.displayName && u.displayName.toLowerCase().includes(term)) ||
+      (u.email && u.email.toLowerCase().includes(term));
+
+    if (!matchSearch) return false;
+
+    if (userRoleFilter === 'ADMIN') {
+      return u.role === 'ADMIN' || u.role === 'SUPER_ADMIN';
+    }
+    if (userRoleFilter === 'USER') {
+      return u.role === 'USER';
+    }
+    if (userRoleFilter === 'BANNED') {
+      return Boolean(u.isBanned);
+    }
+    return true;
+  });
+
+  // IF USER IS NOT LOGGED IN AS ADMIN OR SUPER ADMIN
   if (!isAdmin) {
     return (
       <div className="flex-1 flex items-center justify-center p-6 bg-[#161512]">
-        <div className="bg-[#21201d] border border-white/10 rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-3xl mx-auto shadow-lg">
-              🛡️
-            </div>
-            <h1 className="text-2xl font-black text-white">Admin Control Portal</h1>
-            <p className="text-xs text-[#8c8b88]">
-              {user ? `Logged in as @${user.username} (Standard User). Administrator credentials required.` : 'Enter administrator credentials to access problem management.'}
+        <div className="bg-[#21201d] border border-white/10 rounded-2xl p-8 max-w-md w-full shadow-2xl space-y-6 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-3xl mx-auto shadow-lg">
+            🔒
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-white">Administrator Access Required</h1>
+            <p className="text-xs text-[#8c8b88] mt-2">
+              {user
+                ? `You are signed in as @${user.username} (${user.displayName || 'Coder'}). Only Administrators and the Super Admin are permitted to access this portal.`
+                : 'Please sign in with an Administrator or Super Administrator account to continue.'}
             </p>
           </div>
 
-          {loginError && (
-            <div className="bg-red-500/15 border border-red-500/30 rounded-xl p-3 text-xs text-red-400 font-medium text-center">
-              {loginError}
-            </div>
-          )}
-
-          <form onSubmit={handleAdminLogin} className="space-y-4">
-            <div>
-              <label className="text-xs font-bold text-white/80 block mb-1.5">Admin Email</label>
-              <input
-                type="email"
-                required
-                value={adminEmail}
-                onChange={(e) => setAdminEmail(e.target.value)}
-                placeholder="admin@dsabattle.com"
-                className="w-full bg-[#161512] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#81b64c] transition"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-white/80 block mb-1.5">Admin Password</label>
-              <input
-                type="password"
-                required
-                value={adminPassword}
-                onChange={(e) => setAdminPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-[#161512] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#81b64c] transition"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loginLoading}
-              className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold py-3 rounded-xl shadow-lg transition duration-150 disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+          <div className="space-y-3 pt-2">
+            <Link
+              to="/"
+              className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold py-3 px-4 rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-sm"
             >
-              {loginLoading ? 'Authenticating...' : 'Sign In to Admin Portal'}
-            </button>
-          </form>
+              <span>← Return to Home Arena</span>
+            </Link>
 
-          <div className="pt-4 border-t border-white/5 text-center text-xs text-[#8c8b88]">
-            Default Admin account: <strong className="text-white">admin@dsabattle.com</strong> / <strong className="text-white">admin123</strong>
+            {user ? (
+              <button
+                onClick={() => {
+                  logout();
+                  window.location.href = '/login';
+                }}
+                className="w-full bg-[#2b2926] hover:bg-[#383531] text-white/80 hover:text-white font-bold py-2.5 px-4 rounded-xl border border-white/10 transition text-xs cursor-pointer"
+              >
+                Sign in with Different Account
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="w-full bg-[#2b2926] hover:bg-[#383531] text-white/80 hover:text-white font-bold py-2.5 px-4 rounded-xl border border-white/10 transition text-xs flex items-center justify-center"
+              >
+                Go to Sign In
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -523,21 +626,37 @@ export default function AdminPanel() {
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-2xl shadow-md">
-              {activeAdminTab === 'problems' ? '🛡️' : '🏅'}
+              {activeAdminTab === 'problems' ? '📚' : activeAdminTab === 'tournaments' ? '🏅' : '👥'}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-black text-white">
-                  {activeAdminTab === 'problems' ? 'Admin Problem Studio' : 'Arena Tournament Manager'}
+                  {activeAdminTab === 'problems'
+                    ? 'Admin Problem Studio'
+                    : activeAdminTab === 'tournaments'
+                    ? 'Arena Tournament Manager'
+                    : 'Users & Moderation Management'}
                 </h1>
-                <span className="bg-[#81b64c]/20 text-[#81b64c] text-[10px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider border border-[#81b64c]/30">
-                  Verified Admin
-                </span>
+                {isSuperAdmin ? (
+                  <span className="bg-amber-500/20 text-amber-300 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-amber-500/40 flex items-center gap-1">
+                    <span>👑</span>
+                    <span>Super Admin Authority</span>
+                  </span>
+                ) : (
+                  <span className="bg-[#81b64c]/20 text-[#81b64c] text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-[#81b64c]/30 flex items-center gap-1">
+                    <span>🛡️</span>
+                    <span>Verified Admin</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-[#8c8b88] mt-0.5">
                 {activeAdminTab === 'problems'
-                  ? 'Create problems, configure testcases, constraints, and manage contest curriculum.'
-                  : 'Host open practice arena tournaments, assign problems, and inspect player standings.'}
+                  ? 'Create problems, edit problems, configure testcases, constraints, and manage curriculum.'
+                  : activeAdminTab === 'tournaments'
+                  ? 'Host open practice arena tournaments, assign problems, and inspect player standings.'
+                  : isSuperAdmin
+                  ? 'Super Admin Authority: You have exclusive power to assign or revoke Administrator roles, and ban or unban users.'
+                  : 'Administrator Controls: Review platform users and ban/unban rule violators.'}
               </p>
             </div>
           </div>
@@ -550,13 +669,22 @@ export default function AdminPanel() {
               <span className="text-base leading-none">+</span>
               <span>Create New Problem</span>
             </button>
-          ) : (
+          ) : activeAdminTab === 'tournaments' ? (
             <button
               onClick={openCreateTourneyModal}
               className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 cursor-pointer"
             >
               <span className="text-base leading-none">+</span>
               <span>Schedule Tournament</span>
+            </button>
+          ) : (
+            <button
+              onClick={fetchUsers}
+              disabled={usersLoading}
+              className="bg-[#262421] hover:bg-[#302d29] text-white font-bold text-xs px-4 py-2.5 rounded-xl border border-white/10 transition flex items-center gap-2 cursor-pointer"
+            >
+              <span className={usersLoading ? 'animate-spin' : ''}>🔄</span>
+              <span>Refresh Users</span>
             </button>
           )}
         </div>
@@ -587,6 +715,19 @@ export default function AdminPanel() {
           >
             <span>🏅</span>
             <span>Tournament Manager ({tournaments.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveAdminTab('users')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 cursor-pointer ${
+              activeAdminTab === 'users'
+                ? 'bg-[#81b64c] text-white shadow-lg shadow-[#81b64c]/20'
+                : 'bg-[#262421] text-[#8c8b88] hover:text-white hover:bg-[#302d29] border border-white/5'
+            }`}
+          >
+            <span>👥</span>
+            <span>Users & Moderation ({usersList.length})</span>
           </button>
         </div>
 
@@ -631,7 +772,7 @@ export default function AdminPanel() {
               <span className="text-2xl">🧪</span>
             </div>
           </div>
-        ) : (
+        ) : activeAdminTab === 'tournaments' ? (
           <div className="max-w-7xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
             <div className="bg-[#262421] border border-white/5 rounded-xl p-3.5 flex items-center justify-between">
               <div>
@@ -669,6 +810,46 @@ export default function AdminPanel() {
                 </div>
               </div>
               <span className="text-2xl">🏁</span>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-7xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5">
+            <div className="bg-[#262421] border border-white/5 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-[#8c8b88] font-bold uppercase tracking-wider">Total Registered</div>
+                <div className="text-xl font-black text-white mt-0.5">{usersList.length}</div>
+              </div>
+              <span className="text-2xl">👥</span>
+            </div>
+
+            <div className="bg-[#262421] border border-white/5 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-[#8c8b88] font-bold uppercase tracking-wider">Super Admin</div>
+                <div className="text-xl font-black text-amber-400 mt-0.5">
+                  {usersList.filter(u => u.role === 'SUPER_ADMIN').length || 1} (Owner)
+                </div>
+              </div>
+              <span className="text-2xl">👑</span>
+            </div>
+
+            <div className="bg-[#262421] border border-white/5 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-[#8c8b88] font-bold uppercase tracking-wider">Administrators</div>
+                <div className="text-xl font-black text-purple-400 mt-0.5">
+                  {usersList.filter(u => u.role === 'ADMIN').length}
+                </div>
+              </div>
+              <span className="text-2xl">🛡️</span>
+            </div>
+
+            <div className="bg-[#262421] border border-white/5 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <div className="text-[11px] text-[#8c8b88] font-bold uppercase tracking-wider">Banned Users</div>
+                <div className="text-xl font-black text-red-400 mt-0.5">
+                  {usersList.filter(u => u.isBanned).length}
+                </div>
+              </div>
+              <span className="text-2xl">⛔</span>
             </div>
           </div>
         )}
@@ -808,7 +989,7 @@ export default function AdminPanel() {
               )}
             </div>
           </>
-        ) : (
+        ) : activeAdminTab === 'tournaments' ? (
           <>
             {/* Tournaments Management Table */}
             <div className="bg-[#1e1d1a] border border-[#2d2a26] rounded-2xl overflow-hidden shadow-md">
@@ -945,6 +1126,298 @@ export default function AdminPanel() {
                           </td>
                         </tr>
                       ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Users & Moderation Management Section */}
+            <div className="bg-[#1e1d1a] border border-[#2d2a26] rounded-2xl overflow-hidden shadow-md space-y-4 p-5">
+              {/* Header */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+                <div>
+                  <h2 className="text-base font-black text-white flex items-center gap-2">
+                    <span>👥</span>
+                    <span>User Accounts & Moderation Studio</span>
+                  </h2>
+                  <p className="text-xs text-[#8c8b88] mt-0.5">
+                    {isSuperAdmin
+                      ? '👑 Super Admin Power: Assign or remove Administrator privileges, and ban or unban platform users.'
+                      : '🛡️ Administrator Power: Moderate platform users, inspect standing, and ban or unban violators.'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[#8c8b88] font-bold">Showing {filteredUsers.length} of {usersList.length} users</span>
+                </div>
+              </div>
+
+              {/* Feedback Banners */}
+              {userActionMsg && (
+                <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-xl p-3 text-xs text-emerald-300 font-semibold flex items-center justify-between">
+                  <span>✅ {userActionMsg}</span>
+                  <button onClick={() => setUserActionMsg('')} className="text-white/60 hover:text-white cursor-pointer ml-3">✕</button>
+                </div>
+              )}
+              {userActionError && (
+                <div className="bg-red-500/15 border border-red-500/30 rounded-xl p-3 text-xs text-red-300 font-semibold flex items-center justify-between">
+                  <span>⚠️ {userActionError}</span>
+                  <button onClick={() => setUserActionError('')} className="text-white/60 hover:text-white cursor-pointer ml-3">✕</button>
+                </div>
+              )}
+
+              {/* Search & Filter Controls */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pt-1">
+                <div className="relative flex-1 max-w-md">
+                  <input
+                    type="text"
+                    value={userSearchTerm}
+                    onChange={(e) => setUserSearchTerm(e.target.value)}
+                    placeholder="Search by username, display name, or email..."
+                    className="w-full bg-[#161512] border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-white/40 focus:outline-none focus:border-[#81b64c] transition"
+                  />
+                  <span className="absolute left-3 top-2.5 text-xs text-white/40">🔍</span>
+                </div>
+
+                {/* Filter Pills */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter('ALL')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      userRoleFilter === 'ALL'
+                        ? 'bg-[#81b64c] text-white'
+                        : 'bg-[#262421] text-white/70 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    All ({usersList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter('ADMIN')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      userRoleFilter === 'ADMIN'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-[#262421] text-white/70 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    🛡️ Admins ({usersList.filter(u => u.role === 'ADMIN' || u.role === 'SUPER_ADMIN').length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter('USER')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      userRoleFilter === 'USER'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-[#262421] text-white/70 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    💻 Coders ({usersList.filter(u => u.role === 'USER').length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter('BANNED')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      userRoleFilter === 'BANNED'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-[#262421] text-white/70 hover:text-white border border-white/5'
+                    }`}
+                  >
+                    ⛔ Banned ({usersList.filter(u => u.isBanned).length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Users Table */}
+              {usersLoading ? (
+                <div className="p-12 text-center text-xs text-[#8c8b88]">
+                  <div className="animate-spin text-2xl inline-block mb-2">⏳</div>
+                  <p>Loading users list...</p>
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="p-12 text-center space-y-3">
+                  <div className="text-3xl">👤</div>
+                  <p className="text-sm font-bold text-white">No users found</p>
+                  <p className="text-xs text-[#8c8b88]">
+                    No accounts match "{userSearchTerm}" with filter "{userRoleFilter}".
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-white/5 mt-3">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-[#262421] text-[#8c8b88] border-b border-white/5 font-bold uppercase tracking-wider text-[11px]">
+                        <th className="py-3 px-4">User</th>
+                        <th className="py-3 px-3">Email Address</th>
+                        <th className="py-3 px-3">Platform Role</th>
+                        <th className="py-3 px-3">Account Status</th>
+                        <th className="py-3 px-3">Admin Assignment</th>
+                        <th className="py-3 px-4 text-right">Moderation Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5 font-medium">
+                      {filteredUsers.map((u) => {
+                        const isTargetSuperAdmin = u.role === 'SUPER_ADMIN';
+                        const isTargetAdmin = u.role === 'ADMIN';
+                        const isTargetSelf = user && (user._id === u._id || user.username === u.username);
+
+                        return (
+                          <tr key={u._id} className="hover:bg-white/[0.02] transition">
+                            {/* User Column */}
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-3">
+                                {u.avatar ? (
+                                  <img
+                                    src={u.avatar}
+                                    alt={u.username}
+                                    className="w-9 h-9 rounded-xl object-cover border border-white/10"
+                                  />
+                                ) : (
+                                  <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-zinc-700 to-zinc-600 flex items-center justify-center text-white font-bold border border-white/10 text-xs">
+                                    {(u.displayName || u.username || 'U')[0].toUpperCase()}
+                                  </div>
+                                )}
+                                <div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-white block truncate max-w-[180px]">
+                                      {u.displayName || u.username}
+                                    </span>
+                                    {isTargetSelf && (
+                                      <span className="bg-white/10 text-white/80 text-[9px] px-1.5 py-0.2 rounded font-mono">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[11px] text-[#8c8b88] font-mono block">
+                                    @{u.username}
+                                  </span>
+                                  <span className="text-[10px] text-white/30 block mt-0.5">
+                                    Joined {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'Active coder'}
+                                  </span>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Email Column */}
+                            <td className="py-3.5 px-3 font-mono text-white/80 text-xs">
+                              {u.email || '—'}
+                            </td>
+
+                            {/* Role Badge Column */}
+                            <td className="py-3.5 px-3">
+                              {isTargetSuperAdmin ? (
+                                <span className="bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-300 font-extrabold px-2.5 py-1 rounded-full border border-amber-500/40 text-[10px] inline-flex items-center gap-1">
+                                  <span>👑</span>
+                                  <span>Super Admin</span>
+                                </span>
+                              ) : isTargetAdmin ? (
+                                <span className="bg-purple-500/20 text-purple-300 font-extrabold px-2.5 py-1 rounded-full border border-purple-500/30 text-[10px] inline-flex items-center gap-1">
+                                  <span>🛡️</span>
+                                  <span>Administrator</span>
+                                </span>
+                              ) : (
+                                <span className="bg-zinc-800 text-white/70 font-semibold px-2.5 py-1 rounded-full border border-white/5 text-[10px] inline-flex items-center gap-1">
+                                  <span>💻</span>
+                                  <span>Coder</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Account Status Column */}
+                            <td className="py-3.5 px-3">
+                              {u.isBanned ? (
+                                <div>
+                                  <span className="bg-red-500/20 text-red-400 font-bold px-2 py-0.5 rounded-full border border-red-500/40 text-[10px] inline-flex items-center gap-1">
+                                    <span>⛔</span>
+                                    <span>Banned</span>
+                                  </span>
+                                  {u.bannedReason && (
+                                    <span className="text-[10px] text-red-300/70 block mt-0.5 truncate max-w-[150px]" title={u.bannedReason}>
+                                      {u.bannedReason}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="bg-emerald-500/15 text-emerald-400 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30 text-[10px] inline-flex items-center gap-1">
+                                  <span>●</span>
+                                  <span>Active</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Admin Role Assignment (SUPER ADMIN ONLY) */}
+                            <td className="py-3.5 px-3">
+                              {isTargetSuperAdmin ? (
+                                <span className="text-[11px] font-bold text-amber-400/70 italic flex items-center gap-1">
+                                  <span>🔒</span>
+                                  <span>Super Admin</span>
+                                </span>
+                              ) : isSuperAdmin ? (
+                                isTargetAdmin ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleRole(u)}
+                                    disabled={actionLoadingId === u._id}
+                                    className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 px-2.5 py-1 rounded-lg border border-amber-500/30 transition cursor-pointer font-bold text-[11px] flex items-center gap-1 disabled:opacity-50"
+                                    title="Revoke admin privileges and demote to regular user"
+                                  >
+                                    <span>🔻</span>
+                                    <span>{actionLoadingId === u._id ? 'Updating...' : 'Remove Admin'}</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleRole(u)}
+                                    disabled={actionLoadingId === u._id}
+                                    className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white px-2.5 py-1 rounded-lg shadow-sm transition cursor-pointer font-bold text-[11px] flex items-center gap-1 disabled:opacity-50"
+                                    title="Promote this coder to Administrator"
+                                  >
+                                    <span>🛡️</span>
+                                    <span>{actionLoadingId === u._id ? 'Updating...' : 'Assign Admin'}</span>
+                                  </button>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-white/30 italic flex items-center gap-1">
+                                  <span>🔒</span>
+                                  <span>Super Admin only</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Moderation Actions (Admin & Super Admin) */}
+                            <td className="py-3.5 px-4 text-right">
+                              {isTargetSuperAdmin ? (
+                                <span className="text-[11px] text-white/30 italic font-mono">Protected</span>
+                              ) : !isSuperAdmin && isTargetAdmin ? (
+                                <span className="text-[11px] text-white/30 italic font-mono">Protected</span>
+                              ) : isTargetSelf ? (
+                                <span className="text-[11px] text-white/30 italic font-mono">—</span>
+                              ) : u.isBanned ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleBan(u)}
+                                  disabled={actionLoadingId === u._id}
+                                  className="bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 px-3 py-1 rounded-lg border border-emerald-500/30 transition cursor-pointer font-bold text-[11px] disabled:opacity-50"
+                                >
+                                  {actionLoadingId === u._id ? 'Updating...' : '🔓 Unban User'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleBan(u)}
+                                  disabled={actionLoadingId === u._id}
+                                  className="bg-red-500/15 hover:bg-red-500/25 text-red-400 px-3 py-1 rounded-lg border border-red-500/30 transition cursor-pointer font-bold text-[11px] disabled:opacity-50"
+                                >
+                                  {actionLoadingId === u._id ? 'Updating...' : '🔨 Ban User'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

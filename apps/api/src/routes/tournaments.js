@@ -11,9 +11,25 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const tournaments = await Tournament.find({})
-      .sort({ createdAt: -1 })
+      .sort({ startTime: -1, createdAt: -1 })
       .populate('createdBy', 'username displayName avatar');
-    res.json(tournaments);
+
+    const sanitized = tournaments.map(t => {
+      const obj = t.toObject();
+      if (Array.isArray(obj.participants)) {
+        obj.participants = obj.participants.filter(p => {
+          const u = (p.username || '').toLowerCase().trim();
+          return !u.includes('coder_alice') &&
+                 !u.includes('coder_bob') &&
+                 !u.includes('test_') &&
+                 !u.includes('dummy') &&
+                 !u.includes('bot');
+        });
+      }
+      return obj;
+    });
+
+    res.json(sanitized);
   } catch (error) {
     console.error('Error fetching tournaments:', error);
     res.status(500).json({ message: 'Server error fetching tournaments' });
@@ -30,7 +46,18 @@ router.get('/:id', async (req, res) => {
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
-    res.json(tournament);
+    const obj = tournament.toObject();
+    if (Array.isArray(obj.participants)) {
+      obj.participants = obj.participants.filter(p => {
+        const u = (p.username || '').toLowerCase().trim();
+        return !u.includes('coder_alice') &&
+               !u.includes('coder_bob') &&
+               !u.includes('test_') &&
+               !u.includes('dummy') &&
+               !u.includes('bot');
+      });
+    }
+    res.json(obj);
   } catch (error) {
     console.error('Error fetching tournament:', error);
     res.status(500).json({ message: 'Server error fetching tournament' });
@@ -38,7 +65,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // @route   POST /api/tournaments/:id/register
-// @desc    Register authenticated user for a tournament
+// @desc    Register authenticated real user for a tournament
 // @access  Private
 router.post('/:id/register', protect, async (req, res) => {
   try {
@@ -47,15 +74,24 @@ router.post('/:id/register', protect, async (req, res) => {
       return res.status(404).json({ message: 'Tournament not found' });
     }
 
+    if (tournament.status === 'COMPLETED') {
+      return res.status(400).json({ message: 'This tournament has already ended.' });
+    }
+
+    const uClean = (req.user.username || '').toLowerCase().trim();
+    if (uClean.includes('bot') || req.user.isBot) {
+      return res.status(403).json({ message: 'Bots cannot join tournaments.' });
+    }
+
     // Check if already registered
     const alreadyRegistered = tournament.participants.some(
-      p => p.userId.toString() === req.user._id.toString()
+      p => p.userId && p.userId.toString() === req.user._id.toString()
     );
 
     if (alreadyRegistered) {
       return res.json({
         success: true,
-        message: 'Already registered for this tournament',
+        message: 'You are already registered for this tournament!',
         tournament
       });
     }
@@ -75,7 +111,7 @@ router.post('/:id/register', protect, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Successfully registered for tournament',
+      message: 'Successfully registered for tournament!',
       tournament
     });
   } catch (error) {
@@ -83,6 +119,7 @@ router.post('/:id/register', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error during tournament registration' });
   }
 });
+
 
 // @route   POST /api/tournaments/:id/submit-score
 // @desc    Submit tournament practice score and calculate leaderboard ranks (no Elo changes)

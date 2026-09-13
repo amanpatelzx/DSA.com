@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
@@ -7,12 +7,17 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Profile() {
   const { username } = useParams();
+  const [searchParams] = useSearchParams();
   const { user: authUser, token, isLoggedIn, refreshUser } = useAuth();
   const { sendChallenge } = useSocket();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('overview');
+  
+  const initialTab = (searchParams.get('tab') === 'battles' || searchParams.get('tab') === 'history')
+    ? 'battles'
+    : (['overview', 'solved', 'clubs', 'friends', 'rating'].includes(searchParams.get('tab')) ? searchParams.get('tab') : 'overview');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const navigate = useNavigate();
 
   const isMe = 
@@ -76,12 +81,39 @@ export default function Profile() {
     fetchProfile();
   }, [username, isMe, token, navigate]);
 
-  // Sync browser URL bar to /:username
+  // Sync browser URL bar to /:username while preserving query params and hash
   useEffect(() => {
     if (profileData?.user?.username && (!username || username === 'me')) {
-      navigate(`/${profileData.user.username}`, { replace: true });
+      const search = window.location.search || '';
+      const hash = window.location.hash || '';
+      navigate(`/${profileData.user.username}${search}${hash}`, { replace: true });
     }
   }, [profileData, username, navigate]);
+
+  // Keep activeTab reactive to URL tab query param
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'battles' || tab === 'history') {
+      setActiveTab('battles');
+    } else if (tab && ['overview', 'solved', 'clubs', 'friends', 'rating'].includes(tab)) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
+  // Auto-scroll to battle history if requested via hash or section param
+  useEffect(() => {
+    if (window.location.hash === '#battle-history' || searchParams.get('section') === 'history' || searchParams.get('section') === 'battles') {
+      if (searchParams.get('tab') !== 'battles') {
+        setActiveTab('overview');
+      }
+      setTimeout(() => {
+        const el = document.getElementById('battle-history') || document.getElementById('battle-history-full');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 400);
+    }
+  }, [profileData, searchParams]);
 
   const [friendStatus, setFriendStatus] = useState('idle'); // 'idle' | 'loading' | 'added'
 
@@ -175,11 +207,41 @@ export default function Profile() {
 
   // Edit Profile Modal State
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const COUNTRY_OPTIONS = [
+    { name: 'India', flag: '🇮🇳' },
+    { name: 'United States', flag: '🇺🇸' },
+    { name: 'United Kingdom', flag: '🇬🇧' },
+    { name: 'Canada', flag: '🇨🇦' },
+    { name: 'Germany', flag: '🇩🇪' },
+    { name: 'France', flag: '🇫🇷' },
+    { name: 'Japan', flag: '🇯🇵' },
+    { name: 'Australia', flag: '🇦🇺' },
+    { name: 'Singapore', flag: '🇸🇬' },
+    { name: 'Brazil', flag: '🇧🇷' },
+    { name: 'Russia', flag: '🇷🇺' },
+    { name: 'China', flag: '🇨🇳' },
+    { name: 'South Korea', flag: '🇰🇷' },
+    { name: 'Netherlands', flag: '🇳🇱' },
+    { name: 'Spain', flag: '🇪🇸' },
+    { name: 'Italy', flag: '🇮🇹' },
+    { name: 'United Arab Emirates', flag: '🇦🇪' },
+    { name: 'Poland', flag: '🇵🇱' },
+    { name: 'Indonesia', flag: '🇮🇩' },
+    { name: 'Vietnam', flag: '🇻🇳' },
+    { name: 'Ukraine', flag: '🇺🇦' },
+    { name: 'Bangladesh', flag: '🇧🇩' },
+    { name: 'Pakistan', flag: '🇵🇰' },
+    { name: 'Nigeria', flag: '🇳🇬' },
+    { name: 'Other', flag: '🌐' }
+  ];
+
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
   const [editForm, setEditForm] = useState({
     displayName: '',
+    country: '',
+    countryFlag: '',
     location: '',
     about: '',
     avatar: '',
@@ -326,6 +388,8 @@ export default function Profile() {
     const sl = curUser.socialLinks || {};
     setEditForm({
       displayName: curUser.displayName || curUser.username || '',
+      country: curUser.country || '',
+      countryFlag: curUser.countryFlag || '',
       location: curUser.location || '',
       about: curUser.about || curUser.bio || '',
       avatar: curUser.avatar || '',
@@ -382,6 +446,8 @@ export default function Profile() {
         'http://localhost:5000/api/users/profile',
         {
           displayName: editForm.displayName.trim(),
+          country: (editForm.country || '').trim(),
+          countryFlag: (editForm.countryFlag || '').trim(),
           location: editForm.location.trim(),
           bio: editForm.about.trim(),
           about: editForm.about.trim(),
@@ -1031,7 +1097,9 @@ export default function Profile() {
               }`}
               title={isOwnProfile ? 'Click to change profile picture' : user.username}
             >
-              {user.avatar ? (
+              {user.isBot || user.role === 'BOT' || user.username?.toLowerCase().includes('bot') || user.username?.toLowerCase().includes('stockfish') || user.username?.toLowerCase().includes('deepcoder') ? (
+                <span className="text-5xl">🤖</span>
+              ) : user.avatar ? (
                 <img src={user.avatar} alt={user.username} className="w-full h-full object-cover" />
               ) : (
                 <span>{user.username ? user.username.charAt(0).toUpperCase() : 'U'}</span>
@@ -1054,12 +1122,20 @@ export default function Profile() {
           {/* User Information */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                {user.username}
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight flex items-center gap-2">
+                <span>{user.username}</span>
+                {(user.isBot || user.role === 'BOT' || user.username?.toLowerCase().includes('bot') || user.username?.toLowerCase().includes('stockfish') || user.username?.toLowerCase().includes('deepcoder')) && (
+                  <span className="text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-md font-mono flex items-center gap-1 font-bold">
+                    <span>🤖</span>
+                    <span>BOT</span>
+                  </span>
+                )}
               </h1>
-              <span className="text-2xl" title={user.country || 'India'}>
-                {user.countryFlag || '🇮🇳'}
-              </span>
+              {user.countryFlag ? (
+                <span className="text-2xl" title={user.country || ''}>
+                  {user.countryFlag}
+                </span>
+              ) : null}
               {isOwnProfile && (
                 <span className="bg-[#81b64c]/20 text-[#81b64c] border border-[#81b64c]/30 text-xs font-bold px-2.5 py-0.5 rounded-full">
                   You
@@ -1069,16 +1145,22 @@ export default function Profile() {
 
             <div className="flex items-center gap-3 text-sm text-[#9e9d9a] mt-1.5 flex-wrap">
               <span className="text-white/90 font-medium">{user.displayName || user.username}</span>
-              <span>•</span>
-              <span className="flex items-center gap-1">
-                <span>📍</span>
-                <span>{user.location || 'India'}</span>
-              </span>
+              {user.location ? (
+                <>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <span>📍</span>
+                    <span>{user.location}</span>
+                  </span>
+                </>
+              ) : null}
             </div>
 
-            <div className="text-xs font-semibold text-[#81b64c] uppercase tracking-wider mt-1">
-              {user.organization || 'REC BANDA'}
-            </div>
+            {user.organization ? (
+              <div className="text-xs font-semibold text-[#81b64c] uppercase tracking-wider mt-1">
+                {user.organization}
+              </div>
+            ) : null}
 
             {/* About / Bio Display */}
             {(user.about || user.bio) && (
@@ -1166,7 +1248,7 @@ export default function Profile() {
                 >
                   Challenge
                 </button>
-                {user.isBot || user.username?.toLowerCase().includes('bot') || user.username?.toLowerCase().includes('stockfish') ? (
+                {user.isBot || user.role === 'BOT' || user.username?.toLowerCase().includes('bot') || user.username?.toLowerCase().includes('stockfish') || user.username?.toLowerCase().includes('deepcoder') ? (
                   <span className="flex-1 md:flex-initial bg-purple-500/15 border border-purple-500/30 text-purple-400 font-bold text-xs px-4 py-2.5 rounded-xl flex items-center gap-1.5 justify-center">
                     <span>🤖</span>
                     <span>AI Bot (Unfriendable)</span>
@@ -1535,7 +1617,7 @@ export default function Profile() {
               </div>
 
               {/* Battle Challenge History Section */}
-              <div className="bg-[#21201d] border border-[#2d2a26] rounded-2xl overflow-hidden shadow-xl">
+              <div id="battle-history" className="bg-[#21201d] border border-[#2d2a26] rounded-2xl overflow-hidden shadow-xl scroll-mt-24">
                 <div className="p-4 sm:p-5 border-b border-[#2d2a26] flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h2 className="text-lg font-extrabold text-white flex items-center gap-2">
@@ -1581,7 +1663,7 @@ export default function Profile() {
                         <th className="py-3 px-4">Mode</th>
                         <th className="py-3 px-4">Players</th>
                         <th className="py-3 px-4 text-center">Result</th>
-                        <th className="py-3 px-4 text-center">Analysis</th>
+                        <th className="py-3 px-4 text-center">Solution</th>
                         <th className="py-3 px-4 text-right">Date</th>
                       </tr>
                     </thead>
@@ -1632,7 +1714,7 @@ export default function Profile() {
                                 <span className="text-[#7d7c78] text-xs">
                                   ({user.ratings?.blitz ?? 1500})
                                 </span>
-                                <span>{user.countryFlag || '🇮🇳'}</span>
+                                {user.countryFlag && <span>{user.countryFlag}</span>}
                               </div>
                             </div>
                           </td>
@@ -1665,14 +1747,26 @@ export default function Profile() {
                             </div>
                           </td>
 
-                          {/* Review Action */}
+                          {/* Solution Action: View Code */}
                           <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                            <Link 
-                              to={`/problem/${m.problemTitle ? m.problemTitle.toLowerCase().replace(/\s+/g, '-') : 'two-sum'}`} 
-                              className="bg-[#2b2926] hover:bg-[#383531] text-white font-semibold text-xs px-3 py-1.5 rounded-lg border border-white/10 transition inline-block"
+                            <button 
+                              type="button"
+                              onClick={() => setSelectedSolvedCode({
+                                title: m.problemTitle || m.title || 'Two Sum',
+                                slug: m.slug || (m.problemTitle ? m.problemTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : 'two-sum'),
+                                difficulty: m.difficulty || 'Easy',
+                                code: m.code || `// Solution for ${m.problemTitle || 'Challenge'}\n#include <vector>\n#include <unordered_map>\n\nclass Solution {\npublic:\n    std::vector<int> twoSum(std::vector<int>& nums, int target) {\n        std::unordered_map<int, int> mp;\n        for (int i = 0; i < nums.size(); ++i) {\n            int comp = target - nums[i];\n            if (mp.count(comp)) return {mp[comp], i};\n            mp[nums[i]] = i;\n        }\n        return {};\n    }\n};`,
+                                language: m.language || 'cpp',
+                                runtime: m.runtime || 40,
+                                memory: m.memory || 14.2,
+                                solvedAt: m.date || new Date().toISOString(),
+                                isBattle: true,
+                                mode: m.mode
+                              })}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-[#8c8b88] hover:text-white border border-white/10 transition cursor-pointer"
                             >
-                              Review
-                            </Link>
+                              View Code
+                            </button>
                           </td>
 
                           {/* Date */}
@@ -1689,7 +1783,7 @@ export default function Profile() {
           </>
           ) : activeTab === 'battles' ? (
             /* Battle Challenge History Dedicated Full Section */
-            <div className="bg-[#21201d] border border-[#2d2a26] rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col gap-6">
+            <div id="battle-history-full" className="bg-[#21201d] border border-[#2d2a26] rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col gap-6 scroll-mt-24">
               {/* Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[#2d2a26]">
                 <div>
@@ -1822,7 +1916,7 @@ export default function Profile() {
                         <th className="py-3 px-4">Mode</th>
                         <th className="py-3 px-4">Players</th>
                         <th className="py-3 px-4 text-center">Score / Delta</th>
-                        <th className="py-3 px-4 text-center">Review</th>
+                        <th className="py-3 px-4 text-center">Solution</th>
                         <th className="py-3 px-4 text-right">Date</th>
                       </tr>
                     </thead>
@@ -1877,7 +1971,7 @@ export default function Profile() {
                                 <span className="text-[#7d7c78] text-xs">
                                   ({user.ratings?.blitz ?? 1500})
                                 </span>
-                                <span>{user.countryFlag || '🇮🇳'}</span>
+                                {user.countryFlag && <span>{user.countryFlag}</span>}
                               </div>
                             </div>
                           </td>
@@ -1914,14 +2008,26 @@ export default function Profile() {
                             </div>
                           </td>
 
-                          {/* Review Action */}
+                          {/* Solution Action: View Code */}
                           <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                            <Link 
-                              to={`/problem/${m.problemTitle ? m.problemTitle.toLowerCase().replace(/\s+/g, '-') : 'two-sum'}`} 
-                              className="bg-[#2b2926] hover:bg-[#383531] text-white font-semibold text-xs px-3 py-1.5 rounded-lg border border-white/10 transition inline-block"
+                            <button 
+                              type="button"
+                              onClick={() => setSelectedSolvedCode({
+                                title: m.problemTitle || m.title || 'Two Sum',
+                                slug: m.slug || (m.problemTitle ? m.problemTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') : 'two-sum'),
+                                difficulty: m.difficulty || 'Easy',
+                                code: m.code || `// Solution for ${m.problemTitle || 'Challenge'}\n#include <vector>\n#include <unordered_map>\n\nclass Solution {\npublic:\n    std::vector<int> twoSum(std::vector<int>& nums, int target) {\n        std::unordered_map<int, int> mp;\n        for (int i = 0; i < nums.size(); ++i) {\n            int comp = target - nums[i];\n            if (mp.count(comp)) return {mp[comp], i};\n            mp[nums[i]] = i;\n        }\n        return {};\n    }\n};`,
+                                language: m.language || 'cpp',
+                                runtime: m.runtime || 40,
+                                memory: m.memory || 14.2,
+                                solvedAt: m.date || new Date().toISOString(),
+                                isBattle: true,
+                                mode: m.mode
+                              })}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 hover:bg-white/10 text-[#8c8b88] hover:text-white border border-white/10 transition cursor-pointer"
                             >
-                              Review Duel
-                            </Link>
+                              View Code
+                            </button>
                           </td>
 
                           {/* Date */}
@@ -3446,6 +3552,49 @@ export default function Profile() {
                 />
               </div>
 
+              {/* Country / Region & Flag Selector */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#9e9d9a] mb-1.5">
+                    Country / Region
+                  </label>
+                  <select
+                    value={editForm.country || ''}
+                    onChange={(e) => {
+                      const selectedVal = e.target.value;
+                      const matched = COUNTRY_OPTIONS.find(c => c.name === selectedVal);
+                      setEditForm(prev => ({
+                        ...prev,
+                        country: selectedVal,
+                        countryFlag: matched ? matched.flag : prev.countryFlag
+                      }));
+                    }}
+                    className="w-full bg-[#181714] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#81b64c] transition"
+                  >
+                    <option value="">None (Blank / Unspecified)</option>
+                    {COUNTRY_OPTIONS.map(c => (
+                      <option key={c.name} value={c.name}>
+                        {c.flag} {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#9e9d9a] mb-1.5">
+                    Country Flag / Emoji
+                  </label>
+                  <input
+                    type="text"
+                    value={editForm.countryFlag || ''}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, countryFlag: e.target.value }))}
+                    placeholder="e.g. 🇮🇳, 🇺🇸, 🇬🇧, 🇯🇵 (or leave blank)"
+                    maxLength={10}
+                    className="w-full bg-[#181714] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#686764] focus:outline-none focus:border-[#81b64c] transition"
+                  />
+                </div>
+              </div>
+
               {/* Location & Organization Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -3456,7 +3605,7 @@ export default function Profile() {
                     type="text"
                     value={editForm.location}
                     onChange={(e) => setEditForm(prev => ({ ...prev, location: e.target.value }))}
-                    placeholder="e.g. India, San Francisco, Tokyo"
+                    placeholder="e.g. San Francisco, Tokyo, Banda"
                     maxLength={80}
                     className="w-full bg-[#181714] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#686764] focus:outline-none focus:border-[#81b64c] transition"
                   />
@@ -3470,7 +3619,7 @@ export default function Profile() {
                     type="text"
                     value={editForm.organization}
                     onChange={(e) => setEditForm(prev => ({ ...prev, organization: e.target.value }))}
-                    placeholder="e.g. REC BANDA, IIT, Google"
+                    placeholder="e.g. IIT, Google, REC BANDA"
                     maxLength={80}
                     className="w-full bg-[#181714] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-[#686764] focus:outline-none focus:border-[#81b64c] transition"
                   />

@@ -40,7 +40,7 @@ export default function Signup() {
       const res = await axios.post('http://localhost:5000/api/auth/register', { 
         name: name.trim(),
         username: cleanUsername, 
-        email: email.trim(), 
+        email: email.trim() || undefined, 
         password 
       })
       
@@ -115,18 +115,20 @@ export default function Signup() {
             </span>
           </div>
 
-          {/* Gmail / Email */}
+          {/* Gmail / Email Address (Optional) */}
           <div>
-            <label className="block text-textMuted mb-1.5 text-xs font-semibold uppercase tracking-wider">
-              Gmail / Email Address
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-textMuted text-xs font-semibold uppercase tracking-wider">
+                Gmail / Email Address
+              </label>
+              <span className="text-[10px] text-white/40 font-mono">Optional</span>
+            </div>
             <input 
               type="email" 
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-[#1e1d1a] border border-white/10 rounded-xl px-3.5 py-2.5 sm:py-3 focus:outline-none focus:border-[#81b64c] transition text-white placeholder-[#7d7c78] text-sm"
-              placeholder="e.g. aman@gmail.com"
-              required 
+              placeholder="e.g. aman@gmail.com (optional)"
             />
           </div>
 

@@ -72,8 +72,8 @@ export const PROBLEMS_300 = [
     description: "Given a string s, return the longest contiguous substring in s that reads the same backward as forward.",
     constraints: ["1 <= s.length <= 1000", "s consists of only digits and English letters."],
     examples: [
-      { input: "s = \"babad\"", output: "\"bab\"", explanation: "\"aba\" is also a valid response." },
-      { input: "s = \"cbbd\"", output: "\"bb\"" }
+      { input: "s = \"babad\"", output: "bab", explanation: "\"aba\" is also a valid response." },
+      { input: "s = \"cbbd\"", output: "bb" }
     ]
   },
   {
@@ -85,8 +85,8 @@ export const PROBLEMS_300 = [
     description: "The string \"PAYPALISHIRING\" is written in a zigzag pattern across a given number of rows. Write a function that returns the string read line by line after forming the zigzag layout.",
     constraints: ["1 <= s.length <= 1000", "1 <= numRows <= 1000"],
     examples: [
-      { input: "s = \"PAYPALISHIRING\", numRows = 3", output: "\"PAHNAPLSIIGYIR\"" },
-      { input: "s = \"PAYPALISHIRING\", numRows = 4", output: "\"PINALSIGYAHRPI\"" }
+      { input: "s = \"PAYPALISHIRING\", numRows = 3", output: "PAHNAPLSIIGYIR" },
+      { input: "s = \"PAYPALISHIRING\", numRows = 4", output: "PINALSIGYAHRPI" }
     ]
   },
   {
@@ -168,8 +168,8 @@ export const PROBLEMS_300 = [
     description: "Given an integer num between 1 and 3999, convert it to its canonical Roman numeral representation.",
     constraints: ["1 <= num <= 3999"],
     examples: [
-      { input: "num = 3749", output: "\"MMMDCCXLIX\"" },
-      { input: "num = 58", output: "\"LVIII\"" }
+      { input: "num = 3749", output: "MMMDCCXLIX" },
+      { input: "num = 58", output: "LVIII" }
     ]
   },
   {
@@ -195,8 +195,8 @@ export const PROBLEMS_300 = [
     description: "Write a function to find the longest common prefix string amongst an array of strings. If there is no common prefix, return an empty string \"\".",
     constraints: ["1 <= strs.length <= 200", "0 <= strs[i].length <= 200"],
     examples: [
-      { input: "strs = [\"flower\",\"flow\",\"flight\"]", output: "\"fl\"" },
-      { input: "strs = [\"dog\",\"racecar\",\"car\"]", output: "\"\"" }
+      { input: "strs = [\"flower\",\"flow\",\"flight\"]", output: "fl" },
+      { input: "strs = [\"dog\",\"racecar\",\"car\"]", output: "" }
     ]
   },
   {
@@ -502,8 +502,8 @@ export const PROBLEMS_300 = [
     description: "The count-and-say sequence is a sequence of digit strings defined by the recursive formula: countAndSay(1) = \"1\", countAndSay(n) is the run-length encoding of countAndSay(n-1). Given integer n, return the n-th string.",
     constraints: ["1 <= n <= 30"],
     examples: [
-      { input: "n = 1", output: "\"1\"" },
-      { input: "n = 4", output: "\"1211\"" }
+      { input: "n = 1", output: "1" },
+      { input: "n = 4", output: "1211" }
     ]
   },
   {
@@ -566,8 +566,8 @@ export const PROBLEMS_300 = [
     description: "Given two non-negative integers num1 and num2 represented as strings, return the product of num1 and num2, also represented as a string, without directly converting input strings to integers or using BigInt.",
     constraints: ["1 <= num1.length, num2.length <= 200", "num1 and num2 consist of digits only."],
     examples: [
-      { input: "num1 = \"2\", num2 = \"3\"", output: "\"6\"" },
-      { input: "num1 = \"123\", num2 = \"456\"", output: "\"56088\"" }
+      { input: "num1 = \"2\", num2 = \"3\"", output: "6" },
+      { input: "num1 = \"123\", num2 = \"456\"", output: "56088" }
     ]
   },
   {
@@ -779,8 +779,8 @@ export const PROBLEMS_300 = [
     description: "The set [1, 2, ..., n] contains n! unique permutations. By listing and labeling all permutations in order, return the k-th permutation sequence.",
     constraints: ["1 <= n <= 9", "1 <= k <= n!"],
     examples: [
-      { input: "n = 3, k = 3", output: "\"213\"" },
-      { input: "n = 4, k = 9", output: "\"2314\"" }
+      { input: "n = 3, k = 3", output: "213" },
+      { input: "n = 4, k = 9", output: "2314" }
     ]
   },
   {
@@ -868,8 +868,8 @@ export const PROBLEMS_300 = [
     description: "Given two binary strings a and b, return their sum as a binary string.",
     constraints: ["1 <= a.length, b.length <= 10^4", "a and b consist only of '0' or '1' characters."],
     examples: [
-      { input: "a = \"11\", b = \"1\"", output: "\"100\"" },
-      { input: "a = \"1010\", b = \"1011\"", output: "\"10101\"" }
+      { input: "a = \"11\", b = \"1\"", output: "100" },
+      { input: "a = \"1010\", b = \"1011\"", output: "10101" }
     ]
   },
   {
@@ -919,9 +919,9 @@ export const PROBLEMS_300 = [
     description: "Given an absolute path for a Unix-style file system, convert it to the simplified canonical path (resolving '.', '..', and multiple slashes).",
     constraints: ["1 <= path.length <= 3000"],
     examples: [
-      { input: "path = \"/home/\"", output: "\"/home\"" },
-      { input: "path = \"/home//foo/\"", output: "\"/home/foo\"" },
-      { input: "path = \"/home/user/Documents/../Pictures\"", output: "\"/home/user/Pictures\"" }
+      { input: "path = \"/home/\"", output: "/home" },
+      { input: "path = \"/home//foo/\"", output: "/home/foo" },
+      { input: "path = \"/home/user/Documents/../Pictures\"", output: "/home/user/Pictures" }
     ]
   },
   {
@@ -986,8 +986,8 @@ export const PROBLEMS_300 = [
     description: "Given two strings s and t of lengths m and n respectively, return the minimum window substring of s such that every character in t (including duplicates) is included in the window. If there is no such substring, return empty string \"\".",
     constraints: ["m == s.length", "n == t.length", "1 <= m, n <= 10^5"],
     examples: [
-      { input: "s = \"ADOBECODEBANC\", t = \"ABC\"", output: "\"BANC\"" },
-      { input: "s = \"a\", t = \"a\"", output: "\"a\"" }
+      { input: "s = \"ADOBECODEBANC\", t = \"ABC\"", output: "BANC" },
+      { input: "s = \"a\", t = \"a\"", output: "a" }
     ]
   },
   {
@@ -1683,8 +1683,8 @@ export const PROBLEMS_300 = [
     description: "Given an input string s, reverse the order of the words. A word is defined as a sequence of non-space characters. Return a string of words in reverse order concatenated by a single space, with no leading or trailing spaces.",
     constraints: ["1 <= s.length <= 10^4", "s contains English letters, digits, and spaces."],
     examples: [
-      { input: "s = \"the sky is blue\"", output: "\"blue is sky the\"" },
-      { input: "s = \"  hello world  \"", output: "\"world hello\"" }
+      { input: "s = \"the sky is blue\"", output: "blue is sky the" },
+      { input: "s = \"  hello world  \"", output: "world hello" }
     ]
   },
   {
@@ -1820,8 +1820,8 @@ export const PROBLEMS_300 = [
     description: "Given a list of non-negative integers nums, arrange them such that they form the largest number and return it as a string.",
     constraints: ["1 <= nums.length <= 100", "0 <= nums[i] <= 10^9"],
     examples: [
-      { input: "nums = [10,2]", output: "\"210\"" },
-      { input: "nums = [3,30,34,5,9]", output: "\"9534330\"" }
+      { input: "nums = [10,2]", output: "210" },
+      { input: "nums = [3,30,34,5,9]", output: "9534330" }
     ]
   },
   {
@@ -2483,8 +2483,8 @@ export const PROBLEMS_300 = [
     description: "You are playing Bulls and Cows. Given the secret number secret and friend's guess, return the hint formatted as \"xAyB\" where x is the number of bulls (correct digit and position) and y is the number of cows (correct digit but wrong position).",
     constraints: ["1 <= secret.length, guess.length <= 1000", "secret and guess consist of digits only."],
     examples: [
-      { input: "secret = \"1807\", guess = \"7810\"", output: "\"1A3B\"" },
-      { input: "secret = \"1123\", guess = \"0111\"", output: "\"1A1B\"" }
+      { input: "secret = \"1807\", guess = \"7810\"", output: "1A3B" },
+      { input: "secret = \"1123\", guess = \"0111\"", output: "1A1B" }
     ]
   },
   {

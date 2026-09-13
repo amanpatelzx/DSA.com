@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const testCaseSchema = new mongoose.Schema({
   input: { type: String, required: true },
-  output: { type: String, required: true },
+  output: { type: String, default: '' },
   explanation: { type: String }
 }, { _id: false });
 

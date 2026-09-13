@@ -294,9 +294,9 @@ export const ADDITIONAL_PROBLEMS = [
     description: "Given two integers representing the numerator and denominator of a fraction, return the fraction in string format. If the fractional part is repeating, enclose the repeating digits in parentheses.",
     constraints: ["-2^31 <= numerator, denominator <= 2^31 - 1", "denominator != 0"],
     examples: [
-      { input: "numerator = 1, denominator = 2", output: '"0.5"' },
-      { input: "numerator = 2, denominator = 1", output: '"2"' },
-      { input: "numerator = 4, denominator = 333", output: '"0.(012)"' }
+      { input: "numerator = 1, denominator = 2", output: "0.5" },
+      { input: "numerator = 2, denominator = 1", output: "2" },
+      { input: "numerator = 4, denominator = 333", output: "0.(012)" }
     ]
   },
   {
@@ -308,9 +308,9 @@ export const ADDITIONAL_PROBLEMS = [
     description: "Given an integer columnNumber, return its corresponding column title as it appears in an Excel spreadsheet (1 -> A, 2 -> B, ..., 26 -> Z, 27 -> AA, 28 -> AB, etc.).",
     constraints: ["1 <= columnNumber <= 2^31 - 1"],
     examples: [
-      { input: "columnNumber = 1", output: '"A"' },
-      { input: "columnNumber = 28", output: '"AB"' },
-      { input: "columnNumber = 701", output: '"ZY"' }
+      { input: "columnNumber = 1", output: "A" },
+      { input: "columnNumber = 28", output: "AB" },
+      { input: "columnNumber = 701", output: "ZY" }
     ]
   },
   {
@@ -401,8 +401,8 @@ export const ADDITIONAL_PROBLEMS = [
     description: "You are given a string s. You can convert s to a palindrome by adding characters in front of it. Return the shortest palindrome you can find by performing this transformation.",
     constraints: ["0 <= s.length <= 5 * 10^4", "s consists of lowercase English letters only."],
     examples: [
-      { input: 's = "aacecaaa"', output: '"aaacecaaa"' },
-      { input: 's = "abcd"', output: '"dcbabcd"' }
+      { input: 's = "aacecaaa"', output: "aaacecaaa" },
+      { input: 's = "abcd"', output: "dcbabcd" }
     ]
   },
   {
@@ -558,9 +558,9 @@ export const ADDITIONAL_PROBLEMS = [
     description: "Convert a non-negative integer num to its English words representation.",
     constraints: ["0 <= num <= 2^31 - 1"],
     examples: [
-      { input: "num = 123", output: '"One Hundred Twenty Three"' },
-      { input: "num = 12345", output: '"Twelve Thousand Three Hundred Forty Five"' },
-      { input: "num = 1234567", output: '"One Million Two Hundred Thirty Four Thousand Five Hundred Sixty Seven"' }
+      { input: "num = 123", output: "One Hundred Twenty Three" },
+      { input: "num = 12345", output: "Twelve Thousand Three Hundred Forty Five" },
+      { input: "num = 1234567", output: "One Million Two Hundred Thirty Four Thousand Five Hundred Sixty Seven" }
     ]
   },
   {

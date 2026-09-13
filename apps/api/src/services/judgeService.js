@@ -32,6 +32,11 @@ export const normalizeOutput = (str) => {
       return s.replace(/\s+/g, '');
     }
   }
+  // Strip surrounding quotes from strings so "ca" == ca, 'ca' == ca, "bab" == bab
+  if ((s.startsWith('"') && s.endsWith('"') && s.length >= 2) ||
+      (s.startsWith("'") && s.endsWith("'") && s.length >= 2)) {
+    s = s.slice(1, -1);
+  }
   // Check if both are floating numbers (e.g. 2.0 vs 2.00000)
   const num = Number(s);
   if (!isNaN(num) && s !== '' && !s.includes(' ')) {
@@ -2034,6 +2039,14 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
 
         if (normActual === normExpected) {
           casePassed = true;
+        } else if (slug === 'longest-palindromic-substring') {
+          // For s = "babad", both "bab" and "aba" are valid longest palindromes
+          if ((normExpected === 'bab' && normActual === 'aba') || (normExpected === 'aba' && normActual === 'bab')) {
+            casePassed = true;
+          } else {
+            casePassed = false;
+            if (overallStatus === 'Accepted') overallStatus = 'Wrong Answer';
+          }
         } else {
           casePassed = false;
           if (overallStatus === 'Accepted') overallStatus = 'Wrong Answer';
@@ -2041,12 +2054,19 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
       }
 
       const expVal = tc.expected !== undefined ? tc.expected : tc.output;
+      const cleanExp = (typeof expVal === 'string' &&
+        !((expVal.startsWith('[') && expVal.endsWith(']')) || (expVal.startsWith('{') && expVal.endsWith('}'))) &&
+        ((expVal.startsWith('"') && expVal.endsWith('"') && expVal.length >= 2) ||
+         (expVal.startsWith("'") && expVal.endsWith("'") && expVal.length >= 2)))
+        ? expVal.slice(1, -1)
+        : expVal;
+
       evaluatedCases.push({
         id: tc.id || i + 1,
         name: tc.name || `Case ${i + 1}`,
         input: tc.input,
         output: execRes.stdout || '',
-        expected: expVal,
+        expected: cleanExp,
         passed: casePassed,
         error: caseError,
         runtime: `${execRes.executionTime} ms`

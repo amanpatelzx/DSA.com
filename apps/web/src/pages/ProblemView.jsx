@@ -87,6 +87,17 @@ const toCamelCase = (str) => {
   return (str || 'solution').replace(/[-_ ]+(.)?/g, (_, c) => c ? c.toUpperCase() : '');
 };
 
+const cleanDisplayValue = (val) => {
+  if (val === null || val === undefined) return '';
+  const s = String(val).trim();
+  if ((s.startsWith('[') && s.endsWith(']')) || (s.startsWith('{') && s.endsWith('}'))) return s;
+  if ((s.startsWith('"') && s.endsWith('"') && s.length >= 2) ||
+      (s.startsWith("'") && s.endsWith("'") && s.length >= 2)) {
+    return s.slice(1, -1);
+  }
+  return s;
+};
+
 const getBoilerplateTemplate = (slug, problemTitle, lang, problemObj = null) => {
   const problemKey = (slug || '').toLowerCase().trim();
 
@@ -1999,8 +2010,8 @@ export default function ProblemView() {
             id: i + 1,
             name: `Case ${i + 1}`,
             input: ex.input,
-            expected: ex.output,
-            output: ex.output,
+            expected: cleanDisplayValue(ex.output),
+            output: cleanDisplayValue(ex.output),
             isCustom: false
           }))
         : [
@@ -2811,11 +2822,11 @@ export default function ProblemView() {
                 <div className="bg-[#21201d] border-l-2 border-white/20 border-y border-r border-white/5 rounded-r-xl p-3.5 font-mono text-xs space-y-1.5 shadow-sm">
                   <div>
                     <span className="text-white/50 select-none">Input: </span>
-                    <span className="text-white/90 font-medium">{ex.input}</span>
+                    <span className="text-white/90 font-medium">{cleanDisplayValue(ex.input)}</span>
                   </div>
                   <div>
                     <span className="text-white/50 select-none">Output: </span>
-                    <span className="text-[#81b64c] font-bold">{ex.output}</span>
+                    <span className="text-[#81b64c] font-bold">{cleanDisplayValue(ex.output)}</span>
                   </div>
                   {ex.explanation && (
                     <div className="pt-1 text-white/70 font-sans text-[12px] border-t border-white/5 leading-normal">
@@ -3540,7 +3551,7 @@ export default function ProblemView() {
                         <div>
                           <div className="text-[10px] text-[#7d7b77] uppercase font-bold tracking-wider mb-1">Input</div>
                           <div className="bg-[#1b1a18] border border-white/5 rounded-xl p-2.5 text-white/90">
-                            {runResults.cases[selectedCaseIdx].input}
+                            {cleanDisplayValue(runResults.cases[selectedCaseIdx].input)}
                           </div>
                         </div>
 
@@ -3551,14 +3562,14 @@ export default function ProblemView() {
                           <div className={`bg-[#1b1a18] border border-white/5 rounded-xl p-2.5 font-bold ${
                             runResults.cases[selectedCaseIdx].passed ? 'text-[#81b64c]' : 'text-red-400'
                           }`}>
-                            {runResults.cases[selectedCaseIdx].output || '(No output or error)'}
+                            {cleanDisplayValue(runResults.cases[selectedCaseIdx].output) || '(No output or error)'}
                           </div>
                         </div>
 
                         <div>
                           <div className="text-[10px] text-[#7d7b77] uppercase font-bold tracking-wider mb-1">Expected Output</div>
                           <div className="bg-[#1b1a18] border border-white/5 rounded-xl p-2.5 text-white/90">
-                            {runResults.cases[selectedCaseIdx].expected}
+                            {cleanDisplayValue(runResults.cases[selectedCaseIdx].expected)}
                           </div>
                         </div>
 
@@ -4296,7 +4307,7 @@ export default function ProblemView() {
                 <div>
                   <span className="text-[10px] text-[#8c8b88] uppercase font-bold block mb-0.5">Input</span>
                   <div className="text-white/90 bg-[#12110f] p-2 rounded-lg border border-white/5 truncate">
-                    {wrongSubmissionReaction.failedCase.input}
+                    {cleanDisplayValue(wrongSubmissionReaction.failedCase.input)}
                   </div>
                 </div>
 
@@ -4304,13 +4315,13 @@ export default function ProblemView() {
                   <div>
                     <span className="text-[10px] text-red-400 uppercase font-bold block mb-0.5">Your Output</span>
                     <div className="text-red-400 font-bold bg-[#12110f] p-2 rounded-lg border border-red-500/20 truncate">
-                      {wrongSubmissionReaction.failedCase.output || '(empty)'}
+                      {cleanDisplayValue(wrongSubmissionReaction.failedCase.output) || '(empty)'}
                     </div>
                   </div>
                   <div>
                     <span className="text-[10px] text-[#81b64c] uppercase font-bold block mb-0.5">Expected</span>
                     <div className="text-[#81b64c] font-bold bg-[#12110f] p-2 rounded-lg border border-white/5 truncate">
-                      {wrongSubmissionReaction.failedCase.expected}
+                      {cleanDisplayValue(wrongSubmissionReaction.failedCase.expected)}
                     </div>
                   </div>
                 </div>

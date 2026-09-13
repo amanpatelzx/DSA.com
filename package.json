@@ -10,6 +10,7 @@
     "dev": "npm run dev --prefix apps/web",
     "dev:web": "npm run dev --prefix apps/web",
     "dev:api": "npm run dev --prefix apps/api",
+    "build": "npm run build --prefix apps/web",
     "seed": "npm run seed --prefix apps/api"
   }
 }

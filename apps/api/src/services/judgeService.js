@@ -1778,14 +1778,15 @@ ${executionSnippet}
 };
 
 // Execute single process with timeout
-const executeCommand = (cmd, args, inputData, timeoutMs = 2500) => {
+const executeCommand = (cmd, args = [], inputData, timeoutMs = 2500) => {
   return new Promise((resolve) => {
     const startTime = Date.now();
     let stdout = '';
     let stderr = '';
     let timedOut = false;
 
-    const child = spawn(cmd, args, { shell: true });
+    // Use direct process spawn (shell: false) so arguments and paths are never mangled by shell quoting
+    const child = spawn(cmd, args, { shell: false });
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -1866,12 +1867,12 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
     // 1. C++ / C Compilation Step
     if (normLang === 'cpp' || normLang === 'c' || normLang === 'c++') {
       const srcFile = path.join(tempDir, 'solution.cpp');
-      compiledExecutable = path.join(tempDir, 'solution.exe');
+      compiledExecutable = path.join(tempDir, os.platform() === 'win32' ? 'solution.exe' : 'solution');
       const cppHarness = generateCppHarness(slug, code, meta);
       fs.writeFileSync(srcFile, cppHarness);
 
       // Compile with g++
-      const compileRes = await executeCommand('g++', ['-std=c++20', `"${srcFile}"`, '-o', `"${compiledExecutable}"`], null, 5000);
+      const compileRes = await executeCommand('g++', ['-std=c++20', srcFile, '-o', compiledExecutable], null, 7000);
       if (compileRes.code !== 0) {
         return {
           status: 'Compilation Error',
@@ -1898,7 +1899,7 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
       fs.writeFileSync(srcFile, javaHarness);
 
       // Compile with javac
-      const compileRes = await executeCommand('javac', [`"${srcFile}"`], null, 6000);
+      const compileRes = await executeCommand('javac', [srcFile], null, 7000);
       if (compileRes.code !== 0) {
         return {
           status: 'Compilation Error',
@@ -1942,13 +1943,14 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
       let execRes = null;
 
       if (normLang === 'cpp' || normLang === 'c' || normLang === 'c++') {
-        execRes = await executeCommand(`"${compiledExecutable}"`, [], tc.input, 2000);
+        execRes = await executeCommand(compiledExecutable, [], tc.input, 2500);
       } else if (normLang === 'java') {
-        execRes = await executeCommand('java', ['-cp', `"${tempDir}"`, 'Main'], tc.input, 2500);
+        execRes = await executeCommand('java', ['-cp', tempDir, 'Main'], tc.input, 3000);
       } else if (normLang === 'python' || normLang === 'python3') {
-        execRes = await executeCommand('python', ['-u', `"${pyScript}"`], tc.input, 2000);
+        const pyBin = os.platform() === 'win32' ? 'python' : 'python3';
+        execRes = await executeCommand(pyBin, ['-u', pyScript], tc.input, 2500);
       } else {
-        execRes = await executeCommand('node', [`"${jsScript}"`], tc.input, 2000);
+        execRes = await executeCommand('node', [jsScript], tc.input, 2500);
       }
 
       if (execRes.executionTime > maxCaseTime) {

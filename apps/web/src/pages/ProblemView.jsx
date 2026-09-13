@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import API_BASE_URL from '../config/api';
 import leetcodeSnippetsCache from '../utils/leetcodeSnippetsCache.json';
 import { getBotSolution } from '../utils/botSolutions';
 
@@ -840,10 +841,11 @@ export default function ProblemView() {
           const diffMs = session.endTime - now;
           const remainingSecs = Math.ceil(diffMs / 1000);
 
+          const queryBattleId = searchParams.get('battleId');
           if (remainingSecs > 0) {
             // Reconnect to active battle session and continue smoothly!
             return {
-              battleId: session.battleId || ('battle_' + activeUsername + '_' + now),
+              battleId: session.battleId || queryBattleId || ('battle_' + activeUsername + '_' + now),
               initialTime: remainingSecs,
               isResume: true,
               isExpired: false
@@ -851,7 +853,7 @@ export default function ProblemView() {
           } else if (diffMs > -60000) {
             // Expired recently during this match while reloading
             return {
-              battleId: session.battleId || ('battle_' + activeUsername + '_' + now),
+              battleId: session.battleId || queryBattleId || ('battle_' + activeUsername + '_' + now),
               initialTime: 0,
               isResume: true,
               isExpired: true
@@ -865,7 +867,8 @@ export default function ProblemView() {
 
     // Initialize brand new battle session anchored to real-world clock time
     const endTime = now + totalSecs * 1000;
-    const battleId = 'battle_' + (user?._id || user?.id || activeUsername) + '_' + now;
+    const queryBattleId = searchParams.get('battleId');
+    const battleId = queryBattleId || ('battle_' + (user?._id || user?.id || activeUsername) + '_' + now);
     const newSession = {
       matchKey: currentMatchKey,
       battleId,
@@ -912,12 +915,12 @@ export default function ProblemView() {
 
     let socket;
     try {
-      socket = io('http://localhost:5000', {
+      socket = io(API_BASE_URL, {
         transports: ['websocket', 'polling']
       });
       socketRef.current = socket;
 
-      const battleId = battleIdRef.current;
+      const battleId = searchParams.get('battleId') || battleIdRef.current;
       const userRating = (user?.ratings && user.ratings[mode?.toLowerCase()]) || user?.ratings?.blitz || 1500;
 
       socket.emit('battle:live_register', {
@@ -992,7 +995,12 @@ export default function ProblemView() {
       });
 
       socket.on('battle:opponent_resigned', ({ resignedUsername, winnerUsername }) => {
+        // If event is about active user (e.g. self-resignation), ignore
+        if (resignedUsername && activeUsername && resignedUsername.toLowerCase() === activeUsername.toLowerCase()) {
+          return;
+        }
         setOpponentResigned(true);
+        setOpponentResignedUsername(resignedUsername || opponentParam || 'Opponent');
         setShowOpponentResignedModal(true);
         clearBattleSession(true);
         setTimerActive(false);
@@ -1380,6 +1388,7 @@ export default function ProblemView() {
   // Active Battle Lock & Resignation System
   const [showResignModal, setShowResignModal] = useState(false);
   const [opponentResigned, setOpponentResigned] = useState(false);
+  const [opponentResignedUsername, setOpponentResignedUsername] = useState('');
   const [showOpponentResignedModal, setShowOpponentResignedModal] = useState(false);
   const [pendingNavigationPath, setPendingNavigationPath] = useState('/');
   const [isResigning, setIsResigning] = useState(false);
@@ -2503,15 +2512,16 @@ export default function ProblemView() {
               </span>
             )}
             {opponentResigned ? (
-              <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] font-extrabold px-3 py-1 rounded-md flex items-center gap-1.5 shadow-sm animate-pulse ml-1">
-                <span>🏆</span>
-                <span>You Won!</span>
-              </span>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold shadow-sm animate-in fade-in duration-200">
+                <span className="animate-bounce">🏆</span>
+                <span>You Won by resignation</span>
+              </div>
             ) : (
               <button
                 type="button"
                 onClick={() => handlePromptResign('/')}
-                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 text-[11px] font-bold px-2.5 py-0.5 rounded-md transition cursor-pointer flex items-center gap-1 ml-1"
+                disabled={isResigning}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 active:scale-95 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-50"
                 title="Resign this match and forfeit"
               >
                 <span>🏳️</span>
@@ -2522,10 +2532,15 @@ export default function ProblemView() {
 
           {/* Center: Match Countdown Timer */}
           <div className="flex items-center gap-2 bg-[#262421] border border-white/10 px-3.5 py-1 rounded-xl shadow-inner font-mono">
-            <span className="text-yellow-400 text-sm">⏱️</span>
-            <span className={`font-bold text-sm tracking-wider ${timeLeft < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+            <span className="text-yellow-400 text-sm">{opponentResigned ? '⏸️' : '⏱️'}</span>
+            <span className={`font-bold text-sm tracking-wider ${opponentResigned ? 'text-emerald-400' : timeLeft < 30 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
               {formatTimer(timeLeft)}
             </span>
+            {opponentResigned && (
+              <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider font-sans bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                Stopped
+              </span>
+            )}
           </div>
 
           {/* Right: Opponent vs User Matchup */}
@@ -4378,18 +4393,18 @@ export default function ProblemView() {
             <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-emerald-500/15 blur-3xl rounded-full pointer-events-none" />
 
             {/* Trophy celebration icon */}
-            <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 bg-gradient-to-tr from-emerald-600 via-green-500 to-lime-400 shadow-xl shadow-emerald-500/25 ring-4 ring-emerald-500/20 text-white">
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 bg-gradient-to-tr from-emerald-600 via-green-500 to-lime-400 shadow-xl shadow-emerald-500/25 ring-4 ring-emerald-500/20 text-white animate-bounce">
               🏆
             </div>
 
             <h2 className="text-2xl sm:text-3xl font-black text-white mb-1 tracking-tight">
-              You Won!
+              You Won by resignation
             </h2>
-            <p className="text-sm font-semibold text-emerald-400 mb-2">
-              Opponent Resigned From Battle
+            <p className="text-sm font-bold text-emerald-400 mb-2">
+              @{opponentResignedUsername || opponentParam || 'Opponent'} Resigned the Battle
             </p>
             <p className="text-xs text-[#8c8b88] mb-6">
-              <strong className="text-white font-bold">@{opponentParam || 'Opponent'}</strong> has conceded the match. The victory is officially yours!
+              Your opponent has resigned from the 1v1 battle. The countdown timer has stopped on both ends, and victory is officially yours! You can stay to keep solving the problem or return to the Arena.
             </p>
 
             {/* Rating & Match stats summary */}
@@ -4397,7 +4412,7 @@ export default function ProblemView() {
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#8c8b88]">Match Result:</span>
                 <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  Victory (Conceded)
+                  Victory by Resignation
                 </span>
               </div>
               {isRated ? (
@@ -4417,9 +4432,16 @@ export default function ProblemView() {
                 </div>
               )}
               <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
-                <span className="text-xs text-[#8c8b88]">Status:</span>
+                <span className="text-xs text-[#8c8b88]">Timer Status:</span>
+                <span className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1">
+                  <span>⏸️</span>
+                  <span>Stopped at {formatTimer(timeLeft)}</span>
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                <span className="text-xs text-[#8c8b88]">Tools Status:</span>
                 <span className="text-xs text-white/80">
-                  You may return to the arena or stay to keep solving.
+                  Editor, tests, and runner remain fully active
                 </span>
               </div>
             </div>
@@ -4429,7 +4451,7 @@ export default function ProblemView() {
               <button
                 type="button"
                 onClick={() => setShowOpponentResignedModal(false)}
-                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-1.5"
+                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <span>💻</span>
                 <span>Keep Solving Problem</span>
@@ -4438,7 +4460,7 @@ export default function ProblemView() {
               <button
                 type="button"
                 onClick={() => navigate('/')}
-                className="flex-1 bg-[#2b2926] hover:bg-[#363431] border border-white/10 text-white font-bold text-xs py-3 px-4 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+                className="flex-1 bg-[#2b2926] hover:bg-[#363431] active:scale-95 border border-white/10 text-white font-bold text-xs py-3 px-4 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <span>←</span>
                 <span>Return to Arena</span>

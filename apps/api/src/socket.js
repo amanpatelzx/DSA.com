@@ -786,7 +786,9 @@ export const initSocket = (httpServer) => {
         liveBattles.delete(battleId);
       }
 
-      socket.to(battleId).emit('battle:opponent_resigned', {
+      // Broadcast to room so opponent instantly gets 'You Won by resignation'
+      io.to(battleId).emit('battle:opponent_resigned', {
+        battleId,
         resignedUsername: actualResignedUsername,
         winnerUsername: winnerUsername || 'You'
       });

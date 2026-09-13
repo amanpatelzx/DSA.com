@@ -6,10 +6,13 @@ const battlePlayerSchema = new mongoose.Schema({
   ratingChange: { type: Number, default: 0 },
   score: { type: Number, default: 0 },
   connected: { type: Boolean, default: true },
-  submissions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Submission' }]
+  submissions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Submission' }],
+  code: { type: String, default: '' },
+  language: { type: String, default: 'cpp' }
 }, { _id: false });
 
 const battleSchema = new mongoose.Schema({
+  battleId: { type: String, index: true },
   gameModeId: { type: mongoose.Schema.Types.ObjectId, ref: 'GameMode' },
   timeControlId: { type: mongoose.Schema.Types.ObjectId, ref: 'TimeControl' },
   mode: { type: String, default: 'Blitz' },

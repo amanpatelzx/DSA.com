@@ -25,6 +25,12 @@ const problemVersionSchema = new mongoose.Schema({
   supportedLanguages: [{ type: String }],
   timeLimit: { type: Number },
   memoryLimit: { type: Number },
+  codeSnippets: [{
+    lang: String,
+    langSlug: String,
+    code: String
+  }],
+  metaData: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
 // Ensure unique version numbers per problem

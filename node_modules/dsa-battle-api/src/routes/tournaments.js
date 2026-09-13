@@ -5,11 +5,86 @@ import { protect, admin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
+/**
+ * Synchronize tournament statuses based on current time:
+ * - now < startTime                => UPCOMING
+ * - startTime <= now < endTime     => ACTIVE (LIVE)
+ * - now >= endTime                 => COMPLETED
+ */
+export const syncTournamentStatuses = async () => {
+  try {
+    const now = new Date();
+    const candidates = await Tournament.find({
+      status: { $in: ['UPCOMING', 'ACTIVE'] }
+    });
+
+    let anyChanged = false;
+    for (const tourney of candidates) {
+      const startTime = tourney.startTime ? new Date(tourney.startTime) : new Date(tourney.createdAt || Date.now());
+      const durationMs = (Number(tourney.durationMinutes) || 15) * 60 * 1000;
+      const endTime = tourney.endTime ? new Date(tourney.endTime) : new Date(startTime.getTime() + durationMs);
+
+      // Ensure endTime is persisted
+      if (!tourney.endTime || Math.abs(tourney.endTime.getTime() - endTime.getTime()) > 1000) {
+        tourney.endTime = endTime;
+      }
+
+      if (now.getTime() >= endTime.getTime()) {
+        if (tourney.status !== 'COMPLETED') {
+          tourney.status = 'COMPLETED';
+          tourney.endTime = endTime;
+          await tourney.save();
+          anyChanged = true;
+          console.log(`[Tournament Lifecycle] "${tourney.title}" duration ended -> COMPLETED`);
+        }
+      } else if (now.getTime() >= startTime.getTime() && now.getTime() < endTime.getTime()) {
+        if (tourney.status !== 'ACTIVE') {
+          tourney.status = 'ACTIVE';
+          await tourney.save();
+          anyChanged = true;
+          console.log(`[Tournament Lifecycle] "${tourney.title}" hit scheduled start time -> ACTIVE (LIVE)`);
+        }
+      } else if (now.getTime() < startTime.getTime()) {
+        if (tourney.status !== 'UPCOMING') {
+          tourney.status = 'UPCOMING';
+          await tourney.save();
+          anyChanged = true;
+          console.log(`[Tournament Lifecycle] "${tourney.title}" is in future -> UPCOMING`);
+        }
+      }
+    }
+
+    if (anyChanged) {
+      try {
+        const { getIO } = await import('../socket.js');
+        const io = getIO();
+        if (io) {
+          io.emit('tournaments:status_change', { timestamp: Date.now() });
+        }
+      } catch (err) {
+        // Socket may not be initialized yet
+      }
+    }
+
+    return anyChanged;
+  } catch (error) {
+    console.error('Error syncing tournament statuses:', error);
+    return false;
+  }
+};
+
+// Background ticker every 5 seconds to automatically activate/complete tournaments on schedule
+setInterval(() => {
+  syncTournamentStatuses().catch(() => {});
+}, 5000);
+
 // @route   GET /api/tournaments
 // @desc    Get all tournaments (active, upcoming, completed)
 // @access  Public
 router.get('/', async (req, res) => {
   try {
+    await syncTournamentStatuses();
+
     const tournaments = await Tournament.find({})
       .sort({ startTime: -1, createdAt: -1 })
       .populate('createdBy', 'username displayName avatar');
@@ -41,6 +116,8 @@ router.get('/', async (req, res) => {
 // @access  Public
 router.get('/:id', async (req, res) => {
   try {
+    await syncTournamentStatuses();
+
     const tournament = await Tournament.findById(req.params.id)
       .populate('createdBy', 'username displayName avatar');
     if (!tournament) {
@@ -65,17 +142,29 @@ router.get('/:id', async (req, res) => {
 });
 
 // @route   POST /api/tournaments/:id/register
-// @desc    Register authenticated real user for a tournament
+// @desc    Register authenticated real user for an UPCOMING tournament
 // @access  Private
 router.post('/:id/register', protect, async (req, res) => {
   try {
+    await syncTournamentStatuses();
+
     const tournament = await Tournament.findById(req.params.id);
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
 
+    const now = new Date();
+    const startTime = tournament.startTime ? new Date(tournament.startTime) : new Date(tournament.createdAt || Date.now());
+
     if (tournament.status === 'COMPLETED') {
       return res.status(400).json({ message: 'This tournament has already ended.' });
+    }
+
+    // Strict rule: Registration is only open before start time (while UPCOMING)
+    if (tournament.status === 'ACTIVE' || now.getTime() >= startTime.getTime()) {
+      return res.status(400).json({
+        message: 'Registration is closed because this tournament is already live. Only participants who registered beforehand can enter.'
+      });
     }
 
     const uClean = (req.user.username || '').toLowerCase().trim();
@@ -120,42 +209,45 @@ router.post('/:id/register', protect, async (req, res) => {
   }
 });
 
-
 // @route   POST /api/tournaments/:id/submit-score
 // @desc    Submit tournament practice score and calculate leaderboard ranks (no Elo changes)
 // @access  Private
 router.post('/:id/submit-score', protect, async (req, res) => {
   try {
-    const { problemsSolved = 0, score = 0, timeTakenSeconds = 0 } = req.body;
+    await syncTournamentStatuses();
+
     const tournament = await Tournament.findById(req.params.id);
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
 
+    const now = new Date();
+    const durationMs = (tournament.durationMinutes || 15) * 60 * 1000;
+    const endTime = tournament.endTime ? new Date(tournament.endTime) : new Date(tournament.startTime.getTime() + durationMs);
+
+    if (tournament.status === 'COMPLETED' || now.getTime() >= endTime.getTime()) {
+      return res.status(400).json({
+        message: 'Tournament time has expired. Submissions are no longer accepted.',
+        completed: true
+      });
+    }
+
+    // Only registered participants can submit scores
     let participant = tournament.participants.find(
-      p => p.userId.toString() === req.user._id.toString()
+      p => p.userId && p.userId.toString() === req.user._id.toString()
     );
 
     if (!participant) {
-      // Auto-register if not registered yet
-      participant = {
-        userId: req.user._id,
-        username: req.user.username,
-        avatar: req.user.avatar || '',
-        registeredAt: new Date(),
-        score,
-        problemsSolved,
-        timeTakenSeconds,
-        completedAt: new Date(),
-        rank: 0
-      };
-      tournament.participants.push(participant);
-    } else {
-      participant.score = Math.max(participant.score || 0, score);
-      participant.problemsSolved = Math.max(participant.problemsSolved || 0, problemsSolved);
-      participant.timeTakenSeconds = timeTakenSeconds;
-      participant.completedAt = new Date();
+      return res.status(403).json({
+        message: 'You are not a registered participant for this tournament.'
+      });
     }
+
+    const { problemsSolved = 0, score = 0, timeTakenSeconds = 0 } = req.body;
+    participant.score = Math.max(participant.score || 0, score);
+    participant.problemsSolved = Math.max(participant.problemsSolved || 0, problemsSolved);
+    participant.timeTakenSeconds = timeTakenSeconds;
+    participant.completedAt = new Date();
 
     // Recalculate rankings for all participants who have completed/scored
     // Sort: 1. problemsSolved desc, 2. score desc, 3. timeTakenSeconds asc
@@ -189,7 +281,7 @@ router.post('/:id/submit-score', protect, async (req, res) => {
 });
 
 // @route   POST /api/tournaments
-// @desc    Create a new practice tournament (Admin only)
+// @desc    Create a new practice tournament with scheduled start time (Admin only)
 // @access  Private (Admin)
 router.post('/', protect, admin, async (req, res) => {
   try {
@@ -232,15 +324,30 @@ router.post('/', protect, admin, async (req, res) => {
       }];
     }
 
+    const duration = parseInt(durationMinutes, 10) || 15;
+    const start = startTime ? new Date(startTime) : new Date();
+    const end = new Date(start.getTime() + duration * 60 * 1000);
+    const now = new Date();
+
+    let computedStatus = status;
+    if (now.getTime() >= end.getTime()) {
+      computedStatus = 'COMPLETED';
+    } else if (now.getTime() >= start.getTime()) {
+      computedStatus = 'ACTIVE';
+    } else {
+      computedStatus = 'UPCOMING';
+    }
+
     const tournament = await Tournament.create({
       title: title.trim(),
       description: description || 'Open practice arena tournament. Climb the rankings!',
       mode,
       timeControl,
-      durationMinutes: parseInt(durationMinutes, 10) || 15,
+      durationMinutes: duration,
       problems: resolvedProblems,
-      status: ['UPCOMING', 'ACTIVE', 'COMPLETED'].includes(status) ? status : 'UPCOMING',
-      startTime: startTime ? new Date(startTime) : new Date(),
+      status: computedStatus,
+      startTime: start,
+      endTime: end,
       createdBy: req.user._id,
       participants: [],
       isPracticeOnly: true
@@ -258,11 +365,11 @@ router.post('/', protect, admin, async (req, res) => {
 });
 
 // @route   PUT /api/tournaments/:id
-// @desc    Update tournament details or status (Admin only)
+// @desc    Update tournament details or scheduled times (Admin only)
 // @access  Private (Admin)
 router.put('/:id', protect, admin, async (req, res) => {
   try {
-    const { title, description, mode, timeControl, status, problemSlugs, startTime } = req.body;
+    const { title, description, mode, timeControl, durationMinutes, status, problemSlugs, startTime } = req.body;
     const tournament = await Tournament.findById(req.params.id);
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
@@ -272,13 +379,29 @@ router.put('/:id', protect, admin, async (req, res) => {
     if (description !== undefined) tournament.description = description;
     if (mode) tournament.mode = mode;
     if (timeControl) tournament.timeControl = timeControl;
+    if (durationMinutes !== undefined) tournament.durationMinutes = parseInt(durationMinutes, 10) || 15;
+    if (startTime) tournament.startTime = new Date(startTime);
+
+    const start = tournament.startTime ? new Date(tournament.startTime) : new Date(tournament.createdAt || Date.now());
+    const durationMs = (tournament.durationMinutes || 15) * 60 * 1000;
+    tournament.endTime = new Date(start.getTime() + durationMs);
+
+    const now = new Date();
     if (status && ['UPCOMING', 'ACTIVE', 'COMPLETED'].includes(status)) {
       tournament.status = status;
       if (status === 'COMPLETED') {
-        tournament.endTime = new Date();
+        tournament.endTime = now;
+      }
+    } else {
+      // Auto-compute status matching schedule
+      if (now.getTime() >= tournament.endTime.getTime()) {
+        tournament.status = 'COMPLETED';
+      } else if (now.getTime() >= start.getTime()) {
+        tournament.status = 'ACTIVE';
+      } else {
+        tournament.status = 'UPCOMING';
       }
     }
-    if (startTime) tournament.startTime = new Date(startTime);
 
     if (Array.isArray(problemSlugs) && problemSlugs.length > 0) {
       const foundProbs = await Problem.find({ slug: { $in: problemSlugs } });

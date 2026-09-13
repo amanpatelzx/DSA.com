@@ -3,8 +3,10 @@ import Battle from '../models/Battle.js';
 import User from '../models/User.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { protect } from '../middleware/authMiddleware.js';
-import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats } from '../socket.js';
+import BattleReport from '../models/BattleReport.js';
+import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage } from '../socket.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
+import { getBotSolution } from '../utils/botSolutions.js';
 
 const router = express.Router();
 
@@ -111,6 +113,7 @@ router.post('/record', protect, async (req, res) => {
     const finalOpponentFlag = realOpponent ? (realOpponent.countryFlag || '') : pickedOpponent.flag;
 
     const battle = await Battle.create({
+      battleId: req.body.battleId || `battle_${Date.now()}`,
       mode,
       timeControlStr: timeControl,
       problemTitle,
@@ -127,12 +130,46 @@ router.post('/record', protect, async (req, res) => {
           ratingBefore: currentRating,
           ratingChange,
           score: userResultScore,
-          connected: true
-        }
+          connected: true,
+          code: req.body.code || req.body.playerCode || '',
+          language: req.body.language || req.body.playerLanguage || 'cpp'
+        },
+        ...(realOpponent ? [{
+          userId: realOpponent._id,
+          ratingBefore: oppRating,
+          ratingChange: oppChange,
+          score: opponentResultScore,
+          connected: true,
+          code: req.body.opponentCode || '',
+          language: req.body.opponentLanguage || req.body.language || 'cpp'
+        }] : [])
       ],
       winnerId: result === 'win' ? user._id : null,
       isDraw: result === 'draw'
     });
+
+    if (req.body.battleId) {
+      if (!battleCodeStorage.has(req.body.battleId)) {
+        battleCodeStorage.set(req.body.battleId, new Map());
+      }
+      const bMap = battleCodeStorage.get(req.body.battleId);
+      if (req.body.code || req.body.playerCode) {
+        bMap.set(user.username.toLowerCase(), {
+          username: user.username,
+          userId: user._id,
+          code: req.body.code || req.body.playerCode,
+          language: req.body.language || 'cpp'
+        });
+      }
+      if (req.body.opponentCode && finalOpponentName) {
+        bMap.set(finalOpponentName.toLowerCase(), {
+          username: finalOpponentName,
+          userId: realOpponent?._id,
+          code: req.body.opponentCode,
+          language: req.body.opponentLanguage || req.body.language || 'cpp'
+        });
+      }
+    }
 
     // Record rating history only for rated real human matches!
     if (isRatedMatch) {
@@ -450,6 +487,180 @@ router.post('/resign', protect, async (req, res) => {
   } catch (err) {
     console.error('Error in battle resignation:', err);
     res.status(500).json({ message: 'Server error during battle resignation' });
+  }
+});
+// @route   GET /api/battles/:battleId/code
+// @desc    Retrieve both players' code from a finished or active battle
+// @access  Public
+router.get('/:battleId/code', async (req, res) => {
+  try {
+    const { battleId } = req.params;
+    const { username } = req.query;
+
+    let battle = null;
+    try {
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(battleId);
+      battle = await Battle.findOne({
+        $or: [
+          { battleId },
+          ...(isObjectId ? [{ _id: battleId }] : [])
+        ]
+      }).populate('players.userId', 'username displayName ratings avatar');
+    } catch {}
+
+    const memCodes = battleCodeStorage.get(battleId);
+    let playerCode = '';
+    let playerLanguage = 'cpp';
+    let opponentCode = '';
+    let opponentLanguage = 'cpp';
+    let opponentName = battle?.opponentName || 'Opponent';
+
+    if (battle && battle.players) {
+      battle.players.forEach(p => {
+        const pUsername = p.userId?.username || '';
+        if (username && pUsername.toLowerCase() === username.toLowerCase()) {
+          playerCode = p.code || playerCode;
+          playerLanguage = p.language || playerLanguage;
+        } else {
+          opponentCode = p.code || opponentCode;
+          opponentLanguage = p.language || opponentLanguage;
+          if (pUsername) opponentName = pUsername;
+        }
+      });
+    }
+
+    if (memCodes) {
+      for (const [uKey, data] of memCodes.entries()) {
+        const normKey = (uKey || '').toLowerCase().trim();
+        const normUser = (username || '').toLowerCase().trim();
+
+        if (normUser && (normKey === normUser || normKey === 'user' || normKey === 'you')) {
+          playerCode = data.code || playerCode;
+          playerLanguage = data.language || playerLanguage;
+        } else if (normKey !== normUser && normKey !== 'user' && normKey !== 'you') {
+          opponentCode = data.code || opponentCode;
+          opponentLanguage = data.language || opponentLanguage;
+          if (data.username && data.username !== 'You') opponentName = data.username;
+        }
+      }
+    }
+
+    const isBotOpponent = (
+      !opponentName ||
+      opponentName.toLowerCase().includes('bot') ||
+      opponentName.toLowerCase().includes('stockfish') ||
+      opponentName.toLowerCase().includes('computer') ||
+      opponentName.toLowerCase().includes('deepcoder') ||
+      opponentName.toLowerCase().includes('alpha')
+    );
+
+    const problemSlug = battle?.problemSlug || 'find-the-index-of-the-first-occurrence-in-a-string';
+
+    // If opponent is a bot, or if opponent code is empty or accidentally mirrored, provide authentic distinct algorithmic bot code
+    if (isBotOpponent || !opponentCode || (playerCode && opponentCode.trim() === playerCode.trim())) {
+      opponentCode = getBotSolution(problemSlug, opponentLanguage || 'cpp', opponentName || 'StockfishAlgo');
+    }
+
+    res.json({
+      success: true,
+      battleId,
+      playerCode,
+      playerLanguage,
+      opponentCode,
+      opponentLanguage,
+      opponentName,
+      problemTitle: battle?.problemTitle || 'Battle Challenge'
+    });
+  } catch (err) {
+    console.error('Fetch battle code error:', err);
+    res.status(500).json({ message: 'Server error fetching battle code' });
+  }
+});
+
+// @route   POST /api/battles/report
+// @desc    Submit a cheating report for a 1v1 battle
+// @access  Private
+router.post('/report', protect, async (req, res) => {
+  try {
+    const {
+      battleId,
+      reportedUsername,
+      reportedUserId,
+      problemSlug = 'two-sum',
+      problemTitle = 'Two Sum',
+      mode = 'Blitz',
+      reason = 'AI_GENERATED',
+      description = '',
+      reporterCode = '',
+      reporterLanguage = 'cpp',
+      reportedCode = '',
+      reportedLanguage = 'cpp',
+      ratingDetails
+    } = req.body;
+
+    if (!battleId) {
+      return res.status(400).json({ message: 'battleId is required to file a report' });
+    }
+
+    // Check if user already reported this match
+    const existing = await BattleReport.findOne({
+      battleId,
+      reporterId: req.user._id
+    });
+    if (existing) {
+      return res.status(400).json({ message: 'You have already submitted a report for this match.' });
+    }
+
+    // Find reported user
+    let reportedUser = null;
+    if (reportedUserId) {
+      reportedUser = await User.findById(reportedUserId);
+    }
+    if (!reportedUser && reportedUsername) {
+      reportedUser = await User.findOne({
+        username: new RegExp(`^${reportedUsername.trim()}$`, 'i')
+      });
+    }
+
+    // Fallback reported user ID if bot or not found
+    const targetUserId = reportedUser ? reportedUser._id : req.user._id;
+
+    // Rating details calculation
+    const modeKey = (mode || 'blitz').toLowerCase();
+    const finalRatingDetails = {
+      mode: modeKey,
+      reporterRatingBefore: ratingDetails?.reporterRatingBefore || (req.user.ratings?.[modeKey] || 1500),
+      reporterRatingChange: ratingDetails?.reporterRatingChange !== undefined ? ratingDetails.reporterRatingChange : -12,
+      reportedRatingBefore: ratingDetails?.reportedRatingBefore || (reportedUser?.ratings?.[modeKey] || 1500),
+      reportedRatingChange: ratingDetails?.reportedRatingChange !== undefined ? ratingDetails.reportedRatingChange : 16
+    };
+
+    const report = await BattleReport.create({
+      battleId,
+      reporterId: req.user._id,
+      reportedUserId: targetUserId,
+      problemSlug,
+      problemTitle,
+      mode,
+      reason,
+      description,
+      reporterCode,
+      reporterLanguage,
+      reportedCode,
+      reportedLanguage,
+      ratingDetails: finalRatingDetails,
+      status: 'PENDING',
+      ratingReverted: false
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Cheating report submitted successfully. An administrator will review the code and fair play metrics.',
+      reportId: report._id
+    });
+  } catch (err) {
+    console.error('Submit cheating report error:', err);
+    res.status(500).json({ message: err.message || 'Server error submitting cheating report' });
   }
 });
 

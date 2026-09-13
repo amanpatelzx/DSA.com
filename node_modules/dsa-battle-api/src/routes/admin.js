@@ -4,6 +4,8 @@ import User from '../models/User.js';
 import Ban from '../models/Ban.js';
 import FairPlayEvent from '../models/FairPlayEvent.js';
 import Battle from '../models/Battle.js';
+import BattleReport from '../models/BattleReport.js';
+import RatingHistory from '../models/RatingHistory.js';
 
 const router = express.Router();
 
@@ -148,4 +150,161 @@ router.post('/bans', async (req, res) => {
   }
 });
 
+// @route   GET /api/admin/reports
+// @desc    Get cheating reports with optional status filter
+// @access  Admin & Super Admin
+router.get('/reports', async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = {};
+    if (status && status !== 'ALL') {
+      filter.status = status;
+    }
+
+    const reports = await BattleReport.find(filter)
+      .populate('reporterId', 'username displayName email avatar ratings isBanned')
+      .populate('reportedUserId', 'username displayName email avatar ratings isBanned')
+      .populate('resolvedBy', 'username displayName')
+      .sort({ status: 1, createdAt: -1 });
+
+    res.json(reports);
+  } catch (error) {
+    console.error('Fetch reports error:', error);
+    res.status(500).json({ message: 'Server error fetching reports' });
+  }
+});
+
+// @route   POST /api/admin/reports/:reportId/revert-ratings
+// @desc    Revert ratings for both players involved in a reported battle
+// @access  Admin & Super Admin
+router.post('/reports/:reportId/revert-ratings', async (req, res) => {
+  try {
+    const report = await BattleReport.findById(req.params.reportId)
+      .populate('reporterId')
+      .populate('reportedUserId');
+
+    if (!report) {
+      return res.status(404).json({ message: 'Cheating report not found' });
+    }
+
+    if (report.ratingReverted) {
+      return res.status(400).json({ message: 'Ratings have already been reverted for this report.' });
+    }
+
+    const mode = (report.mode || report.ratingDetails?.mode || 'blitz').toLowerCase();
+    const reporter = report.reporterId;
+    const cheater = report.reportedUserId;
+
+    const reporterDelta = report.ratingDetails?.reporterRatingChange !== undefined
+      ? report.ratingDetails.reporterRatingChange
+      : -12;
+    const cheaterDelta = report.ratingDetails?.reportedRatingChange !== undefined
+      ? report.ratingDetails.reportedRatingChange
+      : 16;
+
+    // 1. Revert Reporter Rating (give back lost points, or undo gain)
+    let reporterOld = 1500;
+    let reporterNew = 1500;
+    if (reporter) {
+      reporterOld = (reporter.ratings && reporter.ratings[mode]) || 1500;
+      // If reporter lost 12, ratingChange was -12. Reversal is - (-12) = +12
+      const rollbackAmount = -reporterDelta;
+      reporterNew = Math.max(100, reporterOld + rollbackAmount);
+
+      if (!reporter.ratings) reporter.ratings = {};
+      reporter.ratings[mode] = reporterNew;
+      await reporter.save();
+
+      await RatingHistory.create({
+        userId: reporter._id,
+        battleId: null,
+        mode: ['bullet', 'blitz', 'rapid', 'classical'].includes(mode) ? mode : 'blitz',
+        oldRating: reporterOld,
+        ratingChange: rollbackAmount,
+        newRating: reporterNew,
+        reason: 'CHEATING_ROLLBACK'
+      });
+    }
+
+    // 2. Revert Cheater Rating (strip away ill-gotten points)
+    let cheaterOld = 1500;
+    let cheaterNew = 1500;
+    if (cheater && String(cheater._id) !== String(reporter?._id)) {
+      cheaterOld = (cheater.ratings && cheater.ratings[mode]) || 1500;
+      // If cheater gained 16, ratingChange was 16. Reversal is - 16
+      const rollbackAmount = -cheaterDelta;
+      cheaterNew = Math.max(100, cheaterOld + rollbackAmount);
+
+      if (!cheater.ratings) cheater.ratings = {};
+      cheater.ratings[mode] = cheaterNew;
+      await cheater.save();
+
+      await RatingHistory.create({
+        userId: cheater._id,
+        battleId: null,
+        mode: ['bullet', 'blitz', 'rapid', 'classical'].includes(mode) ? mode : 'blitz',
+        oldRating: cheaterOld,
+        ratingChange: rollbackAmount,
+        newRating: cheaterNew,
+        reason: 'CHEATING_ROLLBACK'
+      });
+    }
+
+    // 3. Mark Report as Resolved & Reverted
+    report.status = 'RESOLVED_REVERTED';
+    report.ratingReverted = true;
+    report.resolvedBy = req.user._id;
+    report.resolvedAt = new Date();
+    report.adminNotes = req.body.adminNotes || 'Rating changes reversed following cheating verification.';
+    await report.save();
+
+    res.json({
+      success: true,
+      message: `Ratings successfully reverted! @${reporter?.username || 'Reporter'} restored to ${reporterNew}, @${cheater?.username || 'Cheater'} adjusted to ${cheaterNew}.`,
+      report,
+      reporter: {
+        username: reporter?.username,
+        oldRating: reporterOld,
+        newRating: reporterNew
+      },
+      cheater: {
+        username: cheater?.username,
+        oldRating: cheaterOld,
+        newRating: cheaterNew
+      }
+    });
+  } catch (error) {
+    console.error('Rating revert error:', error);
+    res.status(500).json({ message: error.message || 'Server error reverting ratings' });
+  }
+});
+
+// @route   PUT /api/admin/reports/:reportId/dismiss
+// @desc    Dismiss a cheating report without reverting ratings
+// @access  Admin & Super Admin
+router.put('/reports/:reportId/dismiss', async (req, res) => {
+  try {
+    const report = await BattleReport.findById(req.params.reportId);
+    if (!report) {
+      return res.status(404).json({ message: 'Cheating report not found' });
+    }
+
+    report.status = 'DISMISSED';
+    report.resolvedBy = req.user._id;
+    report.resolvedAt = new Date();
+    report.adminNotes = req.body.adminNotes || 'Report dismissed after code and activity review.';
+    await report.save();
+
+    res.json({
+      success: true,
+      message: 'Cheating report dismissed.',
+      report
+    });
+  } catch (error) {
+    console.error('Dismiss report error:', error);
+    res.status(500).json({ message: error.message || 'Server error dismissing report' });
+  }
+});
+
 export default router;
+

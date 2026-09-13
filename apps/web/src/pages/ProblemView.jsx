@@ -5,6 +5,7 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import leetcodeSnippetsCache from '../utils/leetcodeSnippetsCache.json';
+import { getBotSolution } from '../utils/botSolutions';
 
 // Standard LeetCode function templates for supported DSA challenges
 const CODE_TEMPLATES = {
@@ -340,6 +341,76 @@ export default function ProblemView() {
   const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved'
   const [opponentTestsPassed, setOpponentTestsPassed] = useState(0);
   const autoSaveTimerRef = useRef(null);
+
+  // Post-Battle Code Inspection & Cheating Reporting
+  const [opponentCode, setOpponentCode] = useState('');
+  const [opponentLanguage, setOpponentLanguage] = useState('cpp');
+  const [showCodeInspectModal, setShowCodeInspectModal] = useState(false);
+  const [inspectViewMode, setInspectViewMode] = useState('side-by-side'); // 'side-by-side' | 'tabs'
+  const [inspectActiveTab, setInspectActiveTab] = useState('opponent'); // 'opponent' | 'mine'
+
+  // Cheating Report State
+  const [showCheatingReportModal, setShowCheatingReportModal] = useState(false);
+  const [cheatingReportReason, setCheatingReportReason] = useState('AI_GENERATED');
+  const [cheatingReportDesc, setCheatingReportDesc] = useState('');
+  const [cheatingReportSubmitting, setCheatingReportSubmitting] = useState(false);
+  const [cheatingReportSuccess, setCheatingReportSuccess] = useState('');
+  const [cheatingReportError, setCheatingReportError] = useState('');
+
+  // Practice Continuation Mode (upon loss or timeout)
+  const [isContinuationMode, setIsContinuationMode] = useState(false);
+
+  // Tournament Registration & Lifecycle State
+  const [tournamentData, setTournamentData] = useState(null);
+  const [tournamentAccessDenied, setTournamentAccessDenied] = useState(false);
+  const [tournamentConcluded, setTournamentConcluded] = useState(false);
+
+  useEffect(() => {
+    if (!isTournament || !tournamentId) return;
+
+    const fetchAndSyncTournament = async () => {
+      try {
+        const res = await axios.get(`http://localhost:5000/api/tournaments/${tournamentId}`);
+        const tourney = res.data;
+        if (!tourney) return;
+        setTournamentData(tourney);
+
+        // Verify registration
+        const isParticipant = tourney.participants?.some(
+          p => (user?._id && String(p.userId) === String(user._id)) ||
+               (user?.username && p.username?.toLowerCase() === user.username?.toLowerCase())
+        );
+
+        if (!isParticipant) {
+          setTournamentAccessDenied(true);
+          return;
+        }
+
+        const now = Date.now();
+        const sTime = tourney.startTime ? new Date(tourney.startTime).getTime() : now;
+        const durationMs = (tourney.durationMinutes || 15) * 60 * 1000;
+        const eTime = tourney.endTime ? new Date(tourney.endTime).getTime() : sTime + durationMs;
+
+        if (tourney.status === 'COMPLETED' || now >= eTime) {
+          setTournamentConcluded(true);
+          setTimerActive(false);
+          setTimeLeft(0);
+          return;
+        }
+
+        const remainingSecs = Math.max(0, Math.floor((eTime - now) / 1000));
+        setTimeLeft(remainingSecs);
+        timeLeftRef.current = remainingSecs;
+        setTimerActive(remainingSecs > 0);
+      } catch (err) {
+        console.error('Failed to sync tournament session:', err);
+      }
+    };
+
+    fetchAndSyncTournament();
+    const interval = setInterval(fetchAndSyncTournament, 4000);
+    return () => clearInterval(interval);
+  }, [isTournament, tournamentId, user]);
 
   // Editor Font Size state & persistence (defaulting to 14px like standard VS Code/IDE)
   const [editorFontSize, setEditorFontSize] = useState(() => {
@@ -703,10 +774,10 @@ export default function ProblemView() {
   };
 
   // Helper to cleanly clear battle state from storage on win, loss, resignation, or timeout
-  const clearBattleSession = () => {
+  const clearBattleSession = (preserveCodeDrafts = true) => {
     try {
       localStorage.removeItem('dsa_active_battle_session');
-      if (Array.isArray(initialMatchProblems)) {
+      if (!preserveCodeDrafts && Array.isArray(initialMatchProblems)) {
         initialMatchProblems.forEach(pSlug => {
           ['cpp', 'python', 'java', 'javascript', 'typescript', 'c'].forEach(l => {
             sessionStorage.removeItem(`dsa_battle_code_${pSlug}_${l}`);
@@ -849,10 +920,28 @@ export default function ProblemView() {
         }
       });
 
-      socket.on('battle:peer_won', ({ winnerUsername }) => {
+      socket.on('battle:peer_code', ({ code: peerCode, language: peerLang }) => {
+        if (peerCode) {
+          setOpponentCode(peerCode);
+          if (peerLang) setOpponentLanguage(peerLang);
+        }
+      });
+
+      socket.on('battle:opponent_code_response', (oppData) => {
+        if (oppData?.code) {
+          setOpponentCode(oppData.code);
+          if (oppData.language) setOpponentLanguage(oppData.language);
+        }
+      });
+
+      socket.on('battle:peer_won', ({ winnerUsername, finalCode, language: oppLang }) => {
+        if (finalCode) {
+          setOpponentCode(finalCode);
+          if (oppLang) setOpponentLanguage(oppLang);
+        }
         if (winnerUsername && winnerUsername !== activeUsername) {
           playWrongAnswerSound();
-          clearBattleSession();
+          clearBattleSession(true);
           setTimerActive(false);
           const ratingChange = isRated ? -12 : 0;
           setMatchResult({
@@ -867,6 +956,7 @@ export default function ProblemView() {
             totalProblems: matchProblems.length,
             winnerName: winnerUsername
           });
+          fetchOpponentBattleCode(battleIdRef.current);
         }
       });
     } catch (err) {
@@ -907,7 +997,8 @@ export default function ProblemView() {
           language: currentLang || language,
           timeLeft: timeLeftRef.current,
           testsPassed: runResults?.cases?.filter(c => c.passed).length || 0,
-          testsTotal: testcases.length || 3
+          testsTotal: testcases.length || 3,
+          username: activeUsername
         });
       }
     }, 200);
@@ -966,7 +1057,7 @@ export default function ProblemView() {
       } catch {}
     }
 
-    clearBattleSession();
+    clearBattleSession(true);
 
     const activeToken = localStorage.getItem('token') || token;
     let newRating = userModeRating;
@@ -981,6 +1072,7 @@ export default function ProblemView() {
           await axios.post(
             'http://localhost:5000/api/battles/record',
             {
+              battleId: battleIdRef.current,
               mode,
               timeControl: timeControlParam,
               result: 'loss',
@@ -988,7 +1080,10 @@ export default function ProblemView() {
               opponentName: opponentParam,
               isRated: true,
               moves: 0,
-              testAccuracy: '0%'
+              testAccuracy: '0%',
+              playerCode: code,
+              playerLanguage: language,
+              opponentCode
             },
             { headers: { Authorization: `Bearer ${activeToken}` } }
           );
@@ -998,6 +1093,8 @@ export default function ProblemView() {
         }
       }
     }
+
+    fetchOpponentBattleCode(battleIdRef.current);
 
     setMatchResult({
       status: 'timeout',
@@ -1353,6 +1450,111 @@ export default function ProblemView() {
       setShowResignModal(false);
       setIsResigning(false);
       navigate(pendingNavigationPath || '/', { replace: true });
+    }
+  };
+
+  const fetchOpponentBattleCode = async (bId) => {
+    if (!bId) return;
+    try {
+      const res = await axios.get(`http://localhost:5000/api/battles/${bId}/code?username=${encodeURIComponent(activeUsername)}`);
+      if (res.data?.opponentCode) {
+        setOpponentCode(res.data.opponentCode);
+        if (res.data.opponentLanguage) setOpponentLanguage(res.data.opponentLanguage);
+      }
+    } catch (e) {
+      console.warn('Opponent battle code fetch warning:', e.message);
+    }
+  };
+
+  const getEffectiveOpponentCode = () => {
+    const oppName = matchResult?.opponent || opponentParam || 'Opponent';
+    const isBot = isLikelyBot || Boolean(
+      oppName.toLowerCase().includes('bot') ||
+      oppName.toLowerCase().includes('stockfish') ||
+      oppName.toLowerCase().includes('computer') ||
+      oppName.toLowerCase().includes('deepcoder') ||
+      oppName.toLowerCase().includes('alpha')
+    );
+    const langKey = opponentLanguage || language || 'cpp';
+
+    // If opponent is a bot, or if opponent code is empty or accidentally mirrored from player's code
+    if (isBot || (opponentCode && code && opponentCode.trim() === code.trim())) {
+      return getBotSolution(activeSlug || 'two-sum', langKey, oppName);
+    }
+
+    if (opponentCode && opponentCode.trim()) {
+      return opponentCode;
+    }
+
+    const currentSlugKey = (activeSlug || 'two-sum').toLowerCase();
+    if (CODE_TEMPLATES[currentSlugKey] && CODE_TEMPLATES[currentSlugKey][langKey]) {
+      return CODE_TEMPLATES[currentSlugKey][langKey];
+    }
+    return getBotSolution(activeSlug || 'two-sum', langKey, oppName);
+  };
+
+  const handleContinueSolving = () => {
+    setIsContinuationMode(true);
+    setMatchResult(null);
+    setTimerActive(false);
+    isBattleRunningRef.current = false;
+    if (window.__DSA_ACTIVE_BATTLE__) {
+      window.__DSA_ACTIVE_BATTLE__.isRunning = false;
+      window.__DSA_ACTIVE_BATTLE__ = null;
+    }
+    clearBattleSession(true);
+  };
+
+  const handleSubmitCheatingReport = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!cheatingReportDesc.trim()) return;
+
+    setCheatingReportSubmitting(true);
+    setCheatingReportError('');
+    setCheatingReportSuccess('');
+
+    try {
+      const activeToken = token || localStorage.getItem('token');
+      if (!activeToken) {
+        setCheatingReportError('You must be logged in to submit a cheating report.');
+        setCheatingReportSubmitting(false);
+        return;
+      }
+
+      const res = await axios.post(
+        'http://localhost:5000/api/battles/report',
+        {
+          battleId: battleIdRef.current || `battle_${Date.now()}`,
+          reportedUsername: matchResult?.opponent || opponentParam || 'Opponent',
+          problemSlug: activeSlug,
+          problemTitle: problem?.title || activeSlug,
+          mode,
+          reason: cheatingReportReason,
+          description: cheatingReportDesc,
+          reporterCode: code,
+          reporterLanguage: language,
+          reportedCode: getEffectiveOpponentCode(),
+          reportedLanguage: opponentLanguage || language,
+          ratingDetails: {
+            mode: mode.toLowerCase(),
+            reporterRatingBefore: userModeRating,
+            reporterRatingChange: matchResult?.ratingChange !== undefined ? matchResult.ratingChange : -12,
+            reportedRatingBefore: opponentRatingParam || 1500,
+            reportedRatingChange: matchResult?.status === 'loss' ? 16 : -12
+          }
+        },
+        { headers: { Authorization: `Bearer ${activeToken}` } }
+      );
+
+      if (res.data?.success) {
+        setCheatingReportSuccess(res.data.message || 'Report submitted successfully! The administrators will review the code.');
+        setCheatingReportDesc('');
+      }
+    } catch (err) {
+      console.error('Cheating report error:', err);
+      setCheatingReportError(err.response?.data?.message || 'Failed to submit report. Please try again.');
+    } finally {
+      setCheatingReportSubmitting(false);
     }
   };
 
@@ -2040,7 +2242,7 @@ export default function ProblemView() {
           const isAllSolved = matchProblems.every(p => nextSolved.has(p));
 
           if (isAllSolved) {
-            clearBattleSession();
+            clearBattleSession(true);
             playVictorySound();
             setTimerActive(false);
             if (socketRef.current) {
@@ -2051,10 +2253,13 @@ export default function ProblemView() {
               });
               socketRef.current.emit('battle:won', {
                 battleId: battleIdRef.current,
-                winnerUsername: activeUsername
+                winnerUsername: activeUsername,
+                finalCode: code,
+                language
               });
               socketRef.current.emit('battle:live_leave', { battleId: battleIdRef.current });
             }
+            fetchOpponentBattleCode(battleIdRef.current);
             const isRatedResult = Boolean(res.data.isRated);
             const ratingChange = typeof res.data.ratingChange === 'number' ? res.data.ratingChange : (isRated ? 16 : 0);
             setMatchResult({
@@ -2133,7 +2338,49 @@ export default function ProblemView() {
     <div className="flex flex-col h-full flex-1 min-h-0 bg-[#161512] text-[#e3e2de] overflow-hidden">
       
       {/* Top Arena or Practice Bar */}
-      {isChallenge ? (
+      {isContinuationMode ? (
+        <div className="bg-[#1e1d1a] border-b border-[#2d2a26] px-4 py-2.5 flex items-center justify-between gap-4 shrink-0 shadow-md">
+          {/* Left: Problem & Continuation Mode Badge */}
+          <div className="flex items-center gap-3">
+            <Link
+              to="/"
+              className="text-white/60 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <span>←</span>
+              <span>Back to Arena</span>
+            </Link>
+            <span className="text-white/20">|</span>
+            <span className="font-extrabold text-white text-sm truncate">{problem?.title || activeSlug}</span>
+            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${getDifficultyBadge(problem?.difficulty)}`}>
+              {problem?.difficulty || 'Medium'}
+            </span>
+            <span className="bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+              <span>🎯</span>
+              <span>Practice Continuation Mode (No Time Limit)</span>
+            </span>
+          </div>
+
+          {/* Right: Actions */}
+          <div className="flex items-center gap-2.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setShowCodeInspectModal(true)}
+              className="bg-[#2a2926] hover:bg-[#383632] text-white/90 hover:text-white font-bold text-xs px-3 py-1.5 rounded-lg border border-white/10 transition flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>👁️</span>
+              <span>Inspect Match Codes</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCheatingReportModal(true)}
+              className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 font-bold text-xs px-2.5 py-1.5 rounded-lg transition flex items-center gap-1 cursor-pointer"
+            >
+              <span>🚨</span>
+              <span>Report Cheating</span>
+            </button>
+          </div>
+        </div>
+      ) : isChallenge ? (
         <div className="bg-[#1e1d1a] border-b border-[#2d2a26] px-4 py-2.5 flex items-center justify-between gap-4 shrink-0 shadow-md">
           {/* Left: Problem, Mode & Rated/Unrated Badge */}
           <div className="flex items-center gap-3">
@@ -2249,7 +2496,7 @@ export default function ProblemView() {
       )}
 
       {/* MULTI-PROBLEM SWITCHER BAR (LeetCode Format with Dropdown & Arrow Option to go to Next Problem) */}
-      {isChallenge && matchProblems.length > 1 && (
+      {(isChallenge || isContinuationMode) && matchProblems.length > 1 && (
         <div className="bg-[#181714] border-b border-[#2d2a26] px-4 py-2 flex items-center justify-between gap-3 text-xs shrink-0 shadow-inner">
           {/* Left: Arrow options & LeetCode-style Dropdown */}
           <div className="flex items-center gap-2 relative" ref={problemDropdownRef}>
@@ -3293,23 +3540,33 @@ export default function ProblemView() {
         </div>
       )}
 
-      {/* VICTORY / MATCH FINISHED MODAL */}
+      {/* VICTORY / DEFEAT / MATCH FINISHED MODAL */}
       {matchResult && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in duration-200">
             <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 shadow-xl ${
-              matchResult.status === 'timeout'
+              matchResult.status === 'loss'
+                ? 'bg-gradient-to-tr from-rose-700 to-red-500'
+                : matchResult.status === 'timeout'
                 ? 'bg-gradient-to-tr from-amber-600 to-rose-500'
                 : 'bg-gradient-to-tr from-amber-500 to-yellow-300'
             }`}>
-              {matchResult.status === 'timeout' ? '⏳' : '🏆'}
+              {matchResult.status === 'loss' ? '💔' : matchResult.status === 'timeout' ? '⏳' : '🏆'}
             </div>
 
             <h2 className="text-2xl font-black text-white mb-1">
-              {matchResult.status === 'timeout' ? 'Time Expired!' : 'Victory! Challenge Won'}
+              {matchResult.status === 'loss'
+                ? 'Defeat'
+                : matchResult.status === 'timeout'
+                ? 'Time Expired!'
+                : 'Victory! Challenge Won'}
             </h2>
             <p className="text-xs text-[#8c8b88] mb-6">
-              {matchResult.status === 'timeout' ? (
+              {matchResult.status === 'loss' ? (
+                <span>
+                  Defeated by <strong className="text-white">@{matchResult.winnerName || matchResult.opponent || 'Opponent'}</strong> in {matchResult.mode} match.
+                </span>
+              ) : matchResult.status === 'timeout' ? (
                 <span>
                   Match time ran out against <strong className="text-white">@{matchResult.opponent || 'Opponent'}</strong> in {matchResult.mode} match.
                 </span>
@@ -3326,7 +3583,7 @@ export default function ProblemView() {
             </p>
 
             {isLoggedIn ? (
-              <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-6 flex flex-col gap-3">
+              <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-5 flex flex-col gap-3">
                 {matchResult.isRated ? (
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-[#8c8b88]">Rating Adjustment:</span>
@@ -3359,22 +3616,24 @@ export default function ProblemView() {
 
                 <div className="flex items-center justify-between border-t border-white/5 pt-2 text-xs">
                   <span className="text-[#8c8b88]">Current Streak:</span>
-                  <span className={`font-extrabold flex items-center gap-1 ${matchResult.status === 'timeout' ? 'text-zinc-400' : 'text-amber-400'}`}>
-                    <span>{matchResult.status === 'timeout' ? '⏹️' : '🔥'}</span>
+                  <span className={`font-extrabold flex items-center gap-1 ${matchResult.status === 'timeout' || matchResult.status === 'loss' ? 'text-zinc-400' : 'text-amber-400'}`}>
+                    <span>{matchResult.status === 'timeout' || matchResult.status === 'loss' ? '⏹️' : '🔥'}</span>
                     <span>{matchResult.streak || 0} Day Streak</span>
                   </span>
                 </div>
 
-                <div className={`text-[11px] text-center font-medium ${matchResult.status === 'timeout' ? 'text-amber-400' : 'text-[#81b64c]'}`}>
+                <div className={`text-[11px] text-center font-medium ${matchResult.status === 'timeout' || matchResult.status === 'loss' ? 'text-amber-400' : 'text-[#81b64c]'}`}>
                   {matchResult.isRated
-                    ? (matchResult.status === 'timeout' ? '✓ Rated timeout recorded into your Rating & Battle History' : '✓ Rated challenge recorded into your Rating & Battle History')
+                    ? (matchResult.status === 'timeout' || matchResult.status === 'loss'
+                        ? '✓ Rated match result recorded into your Rating & Battle History'
+                        : '✓ Rated challenge recorded into your Rating & Battle History')
                     : '✓ Non-rated challenge completed — ratings preserved without change'}
                 </div>
               </div>
             ) : (
-              <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-6 text-xs text-[#8c8b88]">
-                <p className="text-white font-semibold mb-1">Great job solving this challenge!</p>
-                <p className="mb-3">Log in to record this match to your profile and challenge real players to increase your Elo rating.</p>
+              <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-5 text-xs text-[#8c8b88]">
+                <p className="text-white font-semibold mb-1">Great effort in this challenge!</p>
+                <p className="mb-3">Log in to record your matches, inspect opponents' code, and climb the competitive rankings.</p>
                 <Link
                   to="/login"
                   className="inline-block bg-[#81b64c] text-white font-bold px-4 py-1.5 rounded-lg"
@@ -3384,20 +3643,414 @@ export default function ProblemView() {
               </div>
             )}
 
-            <div className="flex flex-col sm:flex-row gap-3">
+            {/* Post-Battle Solution Review & Cheating Report Banner */}
+            <div className="bg-[#181715] border border-white/10 rounded-2xl p-3 mb-4 flex flex-col gap-2">
+              <div className="flex items-center justify-between text-xs font-bold text-white/80">
+                <span>Code Transparency & Fair Play:</span>
+                <span className="text-[11px] text-[#81b64c]">Verified</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCodeInspectModal(true)}
+                  className="flex-1 bg-[#2b2926] hover:bg-[#383531] text-white font-bold text-xs py-2 px-3 rounded-xl border border-white/10 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>👁️</span>
+                  <span>Inspect Opponent's Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCheatingReportModal(true)}
+                  className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 font-bold text-xs py-2 px-3 rounded-xl transition flex items-center justify-center gap-1 cursor-pointer"
+                  title="Report this player if you suspect cheating"
+                >
+                  <span>🚨</span>
+                  <span>Report</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Option to Continue Solving All Questions (for loss or timeout) */}
+            {(matchResult.status === 'loss' || matchResult.status === 'timeout') && (
+              <button
+                type="button"
+                onClick={handleContinueSolving}
+                className="w-full mb-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm py-3 px-4 rounded-xl transition shadow-lg flex items-center justify-center gap-2 cursor-pointer group"
+              >
+                <span>🎯</span>
+                <span>Continue Solving All Questions (Practice Mode)</span>
+                <span className="group-hover:translate-x-1 transition-transform">→</span>
+              </button>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-2.5">
               <Link
                 to="/profile"
-                className="flex-1 bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs py-3 rounded-xl transition shadow-lg text-center"
+                className="flex-1 bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs py-2.5 rounded-xl transition shadow-lg text-center"
               >
                 View Profile & History
               </Link>
               <Link
                 to="/"
-                className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white font-bold text-xs py-3 rounded-xl border border-white/10 transition text-center"
+                className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white font-bold text-xs py-2.5 rounded-xl border border-white/10 transition text-center"
               >
                 Challenge Next Match
               </Link>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* POST-BATTLE CODE INSPECTION & SOLUTION COMPARISON MODAL */}
+      {showCodeInspectModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+          <div className="bg-[#1c1b18] border border-white/15 rounded-3xl max-w-5xl w-full flex flex-col max-h-[92vh] shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-[#23221e] border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-xl">🔍</span>
+                <div className="min-w-0">
+                  <h3 className="text-base font-extrabold text-white flex items-center gap-2 truncate">
+                    <span>1v1 Match Code Inspection</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      {problem?.title || activeSlug}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-[#8c8b88] truncate">
+                    Comparing solutions: <strong className="text-white">@{activeUsername}</strong> vs <strong className="text-white">@{matchResult?.opponent || opponentParam || 'Opponent'}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCheatingReportModal(true)}
+                  className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 font-bold text-xs px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>🚨</span>
+                  <span>Report Cheating</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCodeInspectModal(false)}
+                  className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white flex items-center justify-center transition cursor-pointer font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Subheader: Comparison Info & View Toggle */}
+            <div className="px-5 py-2.5 bg-[#181715] border-b border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#81b64c]"></span>
+                  <span className="font-bold text-white">Your Solution:</span>
+                  <span className="font-mono text-white/70">({language})</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  <span className="font-bold text-white">@{matchResult?.opponent || opponentParam || 'Opponent'}'s Solution:</span>
+                  <span className="font-mono text-white/70">({opponentLanguage})</span>
+                </div>
+              </div>
+
+              {/* View Toggle */}
+              <div className="flex items-center bg-[#252421] p-0.5 rounded-lg border border-white/10">
+                <button
+                  type="button"
+                  onClick={() => setInspectViewMode('side-by-side')}
+                  className={`px-2.5 py-1 rounded text-xs font-bold transition cursor-pointer ${
+                    inspectViewMode === 'side-by-side' ? 'bg-[#81b64c] text-white' : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Side-by-Side
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInspectViewMode('tabs')}
+                  className={`px-2.5 py-1 rounded text-xs font-bold transition cursor-pointer ${
+                    inspectViewMode === 'tabs' ? 'bg-[#81b64c] text-white' : 'text-white/60 hover:text-white'
+                  }`}
+                >
+                  Tabs View
+                </button>
+              </div>
+            </div>
+
+            {/* Code Body */}
+            <div className="p-4 bg-[#141311] overflow-y-auto max-h-[calc(92vh-150px)]">
+              {inspectViewMode === 'side-by-side' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Left: Your Code */}
+                  <div className="flex flex-col bg-[#1e1d1a] border border-white/10 rounded-2xl overflow-hidden shadow-inner">
+                    <div className="px-3.5 py-2 bg-[#252421] border-b border-white/5 flex items-center justify-between text-xs font-bold">
+                      <span className="text-[#81b64c]">You ({activeUsername})</span>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard.writeText(code)}
+                        className="text-[11px] text-white/60 hover:text-white transition cursor-pointer"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <div className="h-[420px] w-full">
+                      <Editor
+                        key={`inspect_side_user_${language}`}
+                        height="420px"
+                        language={language === 'c' ? 'c' : language === 'cpp' ? 'cpp' : language}
+                        theme="vs-dark"
+                        value={code || '// No code recorded'}
+                        options={{
+                          automaticLayout: true,
+                          readOnly: true,
+                          minimap: { enabled: false },
+                          fontSize: 13,
+                          scrollBeyondLastLine: false,
+                          lineNumbers: 'on',
+                          wordWrap: 'on'
+                        }}
+                        onMount={(editor) => {
+                          setTimeout(() => editor.layout(), 60);
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right: Opponent Code */}
+                  <div className="flex flex-col bg-[#1e1d1a] border border-white/10 rounded-2xl overflow-hidden shadow-inner">
+                    <div className="px-3.5 py-2 bg-[#252421] border-b border-white/5 flex items-center justify-between text-xs font-bold">
+                      <span className="text-amber-400">@{matchResult?.opponent || opponentParam || 'Opponent'}</span>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard.writeText(getEffectiveOpponentCode())}
+                        className="text-[11px] text-white/60 hover:text-white transition cursor-pointer"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <div className="h-[420px] w-full">
+                      <Editor
+                        key={`inspect_side_opp_${opponentLanguage}`}
+                        height="420px"
+                        language={opponentLanguage === 'c' ? 'c' : opponentLanguage === 'cpp' ? 'cpp' : opponentLanguage}
+                        theme="vs-dark"
+                        value={getEffectiveOpponentCode()}
+                        options={{
+                          automaticLayout: true,
+                          readOnly: true,
+                          minimap: { enabled: false },
+                          fontSize: 13,
+                          scrollBeyondLastLine: false,
+                          lineNumbers: 'on',
+                          wordWrap: 'on'
+                        }}
+                        onMount={(editor) => {
+                          setTimeout(() => editor.layout(), 60);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col bg-[#1e1d1a] border border-white/10 rounded-2xl overflow-hidden shadow-inner">
+                  <div className="px-4 py-2 bg-[#252421] border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setInspectActiveTab('opponent')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          inspectActiveTab === 'opponent' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'text-white/60 hover:text-white'
+                        }`}
+                      >
+                        @{matchResult?.opponent || opponentParam || 'Opponent'}'s Code
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInspectActiveTab('mine')}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          inspectActiveTab === 'mine' ? 'bg-[#81b64c]/20 text-[#81b64c] border border-[#81b64c]/40' : 'text-white/60 hover:text-white'
+                        }`}
+                      >
+                        Your Code ({activeUsername})
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(inspectActiveTab === 'mine' ? code : getEffectiveOpponentCode())}
+                      className="text-xs text-white/70 hover:text-white font-bold cursor-pointer"
+                    >
+                      Copy Code
+                    </button>
+                  </div>
+                  <div className="h-[420px] w-full">
+                    <Editor
+                      key={`inspect_tabs_${inspectActiveTab}_${inspectActiveTab === 'mine' ? language : opponentLanguage}`}
+                      height="420px"
+                      language={
+                        inspectActiveTab === 'mine'
+                          ? (language === 'c' ? 'c' : language === 'cpp' ? 'cpp' : language)
+                          : (opponentLanguage === 'c' ? 'c' : opponentLanguage === 'cpp' ? 'cpp' : opponentLanguage)
+                      }
+                      theme="vs-dark"
+                      value={inspectActiveTab === 'mine' ? (code || '// No code recorded') : getEffectiveOpponentCode()}
+                      options={{
+                        automaticLayout: true,
+                        readOnly: true,
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        scrollBeyondLastLine: false,
+                        lineNumbers: 'on',
+                        wordWrap: 'on'
+                      }}
+                      onMount={(editor) => {
+                        setTimeout(() => editor.layout(), 60);
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-[#23221e] border-t border-white/10 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <span className="text-xs text-[#8c8b88]">
+                Notice anything suspicious? You can report cheating directly to the admin team for rating review.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCheatingReportModal(true)}
+                  className="bg-red-500 hover:bg-red-600 text-white font-bold text-xs py-2 px-4 rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <span>🚨</span>
+                  <span>Report Opponent</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCodeInspectModal(false)}
+                  className="bg-[#2a2926] hover:bg-[#383632] text-white font-bold text-xs py-2 px-4 rounded-xl border border-white/10 transition cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHEATING REPORT MODAL */}
+      {showCheatingReportModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#21201d] border border-red-500/30 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2.5 text-red-400">
+                <span className="text-2xl">🚨</span>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    Report @{matchResult?.opponent || opponentParam || 'Opponent'}
+                  </h3>
+                  <p className="text-xs text-[#8c8b88]">
+                    Fair Play & Anti-Cheating Review
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCheatingReportModal(false);
+                  setCheatingReportError('');
+                  setCheatingReportSuccess('');
+                }}
+                className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white flex items-center justify-center transition cursor-pointer font-bold text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {cheatingReportSuccess ? (
+              <div className="bg-emerald-500/15 border border-emerald-500/30 rounded-2xl p-5 text-center my-4">
+                <div className="text-3xl mb-2">✅</div>
+                <h4 className="text-sm font-bold text-emerald-400 mb-1">Report Submitted to Administrator</h4>
+                <p className="text-xs text-white/70 mb-4">
+                  {cheatingReportSuccess}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCheatingReportModal(false);
+                    setCheatingReportSuccess('');
+                  }}
+                  className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs py-2 px-5 rounded-xl transition cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitCheatingReport} className="space-y-4">
+                {cheatingReportError && (
+                  <div className="bg-red-500/15 border border-red-500/30 text-red-400 text-xs p-3 rounded-xl">
+                    {cheatingReportError}
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-[#8c8b88] uppercase tracking-wider mb-1.5">
+                    Violation Category
+                  </label>
+                  <select
+                    value={cheatingReportReason}
+                    onChange={(e) => setCheatingReportReason(e.target.value)}
+                    className="w-full bg-[#181715] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 transition"
+                  >
+                    <option value="AI_GENERATED">🤖 AI Generated Code (ChatGPT, Copilot, Claude)</option>
+                    <option value="SUSPICIOUS_SPEED">⚡ Inhuman / Instant Solving Velocity</option>
+                    <option value="EXTERNAL_PASTE">📋 Plagiarism / External Pre-written Paste</option>
+                    <option value="TAB_SWITCHING">👁️ Tab Switching / Window Blur Activity</option>
+                    <option value="OTHER">⚠️ Other Fair Play Violation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#8c8b88] uppercase tracking-wider mb-1.5">
+                    Evidence & Remarks
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={cheatingReportDesc}
+                    onChange={(e) => setCheatingReportDesc(e.target.value)}
+                    placeholder="Describe specific details (e.g. solved in 5 seconds with boilerplate AI docstrings, suspicious typing cadence)..."
+                    className="w-full bg-[#181715] border border-white/10 rounded-xl p-3 text-xs text-white placeholder-white/30 focus:outline-none focus:border-red-500 transition"
+                    required
+                  />
+                </div>
+
+                <div className="bg-[#181715] border border-white/5 rounded-xl p-3 text-[11px] text-white/60 space-y-1">
+                  <p className="font-semibold text-white/80">Snapshot Attached Automatically:</p>
+                  <p>• Both player code solutions at match conclusion</p>
+                  <p>• Match rating adjustments ({matchResult?.ratingChange ? `${matchResult.ratingChange} Elo` : 'Rated'})</p>
+                  <p>• Battle ID: <span className="font-mono text-white/80">{battleIdRef.current}</span></p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCheatingReportModal(false)}
+                    className="px-4 py-2 bg-[#2a2926] hover:bg-[#383632] text-white/80 hover:text-white text-xs font-bold rounded-xl transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={cheatingReportSubmitting}
+                    className="px-5 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition shadow-lg flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {cheatingReportSubmitting ? 'Submitting...' : 'Submit Report for Admin Review'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -3601,6 +4254,56 @@ export default function ProblemView() {
                 ) : (
                   <span>Resign & Leave</span>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOURNAMENT ACCESS DENIED MODAL */}
+      {tournamentAccessDenied && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#21201d] border border-red-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 flex items-center justify-center text-3xl mx-auto mb-4">
+              🔒
+            </div>
+            <h2 className="text-xl font-black text-white mb-2">Registration Required</h2>
+            <p className="text-xs text-[#8c8b88] leading-relaxed mb-6">
+              You did not register for <strong className="text-white">{tournamentData?.title || 'this tournament'}</strong> before it went live. In accordance with fair play rules, only participants registered before start time can enter the arena.
+            </p>
+            <button
+              onClick={() => navigate('/')}
+              className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-sm py-3 rounded-xl transition shadow-md cursor-pointer"
+            >
+              Return to Home Arena
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TOURNAMENT CONCLUDED / TIME OVER MODAL */}
+      {tournamentConcluded && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#21201d] border border-amber-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center text-3xl mx-auto mb-4">
+              ⏰
+            </div>
+            <h2 className="text-xl font-black text-white mb-2">Tournament Time Expired!</h2>
+            <p className="text-xs text-[#8c8b88] leading-relaxed mb-6">
+              The scheduled duration for <strong className="text-white">{tournamentData?.title || 'this arena tournament'}</strong> has concluded. Submissions are now finalized and official leaderboard ranks have been set.
+            </p>
+            <div className="flex flex-col gap-2.5">
+              <button
+                onClick={() => navigate('/')}
+                className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-sm py-3 rounded-xl transition shadow-md cursor-pointer"
+              >
+                Back to Arena
+              </button>
+              <button
+                onClick={() => navigate('/')}
+                className="w-full bg-[#2a2926] hover:bg-[#35332f] text-white/80 font-bold text-xs py-2.5 rounded-xl border border-white/10 transition cursor-pointer"
+              >
+                View Tournament Standings on Home
               </button>
             </div>
           </div>

@@ -48,6 +48,7 @@ const clearUserOpenChallenges = (userId, username, excludeChallengeId = null) =>
 // Active live battles registry: battleId -> BattleState
 export const liveBattles = new Map();
 const socketToBattle = new Map(); // socketId -> battleId
+export const battleCodeStorage = new Map(); // battleId -> Map<usernameLower, { username, code, language, testsPassed, testsTotal, updatedAt }>
 
 export const isUserOnline = (username) => {
   if (!username) return false;
@@ -677,8 +678,26 @@ export const initSocket = (httpServer) => {
     });
 
     // Relay real peer code broadcast
-    socket.on('battle:code_update', ({ battleId, code, language, timeLeft, testsPassed, testsTotal }) => {
+    socket.on('battle:code_update', ({ battleId, code, language, timeLeft, testsPassed, testsTotal, username }) => {
       if (!battleId) return;
+
+      const userRecord = socketToUser.get(socket.id);
+      const actualUsername = username || userRecord?.username || 'user';
+      const userKey = actualUsername.toLowerCase().trim();
+
+      // Store in memory registry for post-game inspection
+      if (!battleCodeStorage.has(battleId)) {
+        battleCodeStorage.set(battleId, new Map());
+      }
+      battleCodeStorage.get(battleId).set(userKey, {
+        username: actualUsername !== 'user' ? actualUsername : (userRecord?.username || 'You'),
+        userId: userRecord?.userId,
+        code: code || '',
+        language: language || 'cpp',
+        testsPassed: testsPassed || 0,
+        testsTotal: testsTotal || 3,
+        updatedAt: Date.now()
+      });
 
       // Broadcast to opponent in the same battle room
       socket.to(battleId).emit('battle:peer_code', {
@@ -687,7 +706,8 @@ export const initSocket = (httpServer) => {
         timeLeft,
         testsPassed,
         testsTotal,
-        senderSocketId: socket.id
+        senderSocketId: socket.id,
+        senderUsername: actualUsername !== 'user' ? actualUsername : userRecord?.username
       });
 
       // Update live battle registry if top game
@@ -729,10 +749,44 @@ export const initSocket = (httpServer) => {
       }
     });
 
-    // Relay peer victory event
-    socket.on('battle:won', ({ battleId, winnerUsername }) => {
+    // Relay peer victory event and exchange final code
+    socket.on('battle:won', ({ battleId, winnerUsername, finalCode, language, username }) => {
       if (!battleId) return;
-      socket.to(battleId).emit('battle:peer_won', { winnerUsername });
+      const userRecord = socketToUser.get(socket.id);
+      const actualUsername = username || winnerUsername || userRecord?.username || 'user';
+      const userKey = actualUsername.toLowerCase().trim();
+
+      if (finalCode) {
+        if (!battleCodeStorage.has(battleId)) {
+          battleCodeStorage.set(battleId, new Map());
+        }
+        battleCodeStorage.get(battleId).set(userKey, {
+          username: actualUsername !== 'user' ? actualUsername : (userRecord?.username || winnerUsername),
+          userId: userRecord?.userId,
+          code: finalCode,
+          language: language || 'cpp',
+          updatedAt: Date.now()
+        });
+      }
+
+      socket.to(battleId).emit('battle:peer_won', {
+        winnerUsername,
+        finalCode,
+        language
+      });
+    });
+
+    // Request opponent code directly via socket
+    socket.on('battle:request_opponent_code', ({ battleId, opponentUsername }) => {
+      if (!battleId) return;
+      const bMap = battleCodeStorage.get(battleId);
+      if (bMap && opponentUsername) {
+        const oppData = bMap.get(opponentUsername.toLowerCase().trim());
+        if (oppData) {
+          socket.emit('battle:opponent_code_response', oppData);
+          return;
+        }
+      }
     });
 
     // 5. Live Battle Registry for homepage spectator
@@ -776,6 +830,14 @@ export const initSocket = (httpServer) => {
           testsTotal: data.testsTotal || 3
         }
       });
+
+      if (data.user?.username) {
+        socketToUser.set(socket.id, {
+          userId: data.user.id || data.user._id,
+          username: data.user.username,
+          rating: pRating
+        });
+      }
 
       socketToBattle.set(socket.id, data.battleId);
       socket.join(data.battleId);

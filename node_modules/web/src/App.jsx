@@ -475,10 +475,21 @@ export default function App() {
     }
   };
 
+  const [tourneyCurrentTime, setTourneyCurrentTime] = useState(Date.now());
+
   useEffect(() => {
-    if (showTournamentsModal) {
+    if (!showTournamentsModal) return;
+    fetchAppTournaments();
+    const pollInterval = setInterval(() => {
       fetchAppTournaments();
-    }
+    }, 4000);
+    const tickInterval = setInterval(() => {
+      setTourneyCurrentTime(Date.now());
+    }, 1000);
+    return () => {
+      clearInterval(pollInterval);
+      clearInterval(tickInterval);
+    };
   }, [showTournamentsModal]);
 
   const handleRegisterTournament = async (tourneyId) => {
@@ -503,6 +514,13 @@ export default function App() {
   };
 
   const handleEnterTournament = (tourney) => {
+    const isUserRegistered = tourney.participants?.some(
+      p => (user?._id && String(p.userId) === String(user._id)) || (user?.username && p.username?.toLowerCase() === user.username?.toLowerCase())
+    );
+    if (!isUserRegistered) {
+      alert('Access Restricted: Only participants who registered before the scheduled start time can enter this live tournament.');
+      return;
+    }
     setShowTournamentsModal(false);
     const problemSlugs = tourney.problems?.map(p => typeof p === 'string' ? p : p.slug).filter(Boolean) || [];
     const firstSlug = problemSlugs[0] || 'two-sum';
@@ -525,6 +543,17 @@ export default function App() {
     acceptOpenChallenge,
     cancelOpenChallenge
   } = useSocket();
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleStatusChange = () => {
+      fetchAppTournaments();
+    };
+    socket.on('tournaments:status_change', handleStatusChange);
+    return () => {
+      socket.off('tournaments:status_change', handleStatusChange);
+    };
+  }, [socket]);
 
   const myOpenChallenge = useMemo(() => {
     if (!user || !openChallenges) return null;
@@ -2671,20 +2700,45 @@ export default function App() {
                     const isUserRegistered = tourney.participants?.some(
                       p => (user?._id && String(p.userId) === String(user._id)) || (user?.username && p.username?.toLowerCase() === user.username?.toLowerCase())
                     );
-                    const isActive = tourney.status === 'ACTIVE';
+                    const sTime = tourney.startTime ? new Date(tourney.startTime).getTime() : 0;
+                    const durationMs = (tourney.durationMinutes || 15) * 60 * 1000;
+                    const eTime = tourney.endTime ? new Date(tourney.endTime).getTime() : sTime + durationMs;
+                    const now = tourneyCurrentTime;
+                    const isLive = tourney.status === 'ACTIVE' || (now >= sTime && now < eTime);
+                    const isPast = tourney.status === 'COMPLETED' || now >= eTime;
 
                     return (
                       <div key={tourney._id} className="bg-[#1b1a18] p-4 rounded-xl border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-white/20 transition">
                         <div className="flex flex-col flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-bold text-white truncate">{tourney.title}</span>
-                            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider flex items-center gap-1 ${
-                              isActive
-                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse'
-                                : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                            }`}>
-                              <span>{isActive ? 'LIVE NOW 🔴' : 'UPCOMING ⏳'}</span>
-                            </span>
+                            {isLive ? (
+                              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider flex items-center gap-1 bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse">
+                                <span>🔴 LIVE NOW</span>
+                                <span>•</span>
+                                <span>{(() => {
+                                  const diffMs = Math.max(0, eTime - now);
+                                  const m = Math.floor(diffMs / 60000);
+                                  const s = Math.floor((diffMs % 60000) / 1000);
+                                  return `${m}m ${s < 10 ? '0' : ''}${s}s left`;
+                                })()}</span>
+                              </span>
+                            ) : isPast ? (
+                              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider bg-sky-500/20 text-sky-400 border-sky-500/30">
+                                COMPLETED ✓
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded border uppercase tracking-wider flex items-center gap-1 bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                                <span>⏳ UPCOMING</span>
+                                <span>•</span>
+                                <span>{(() => {
+                                  const diffMs = Math.max(0, sTime - now);
+                                  const m = Math.floor(diffMs / 60000);
+                                  const s = Math.floor((diffMs % 60000) / 1000);
+                                  return diffMs > 3600000 ? `${Math.floor(diffMs / 3600000)}h ${m % 60}m` : `${m}m ${s < 10 ? '0' : ''}${s}s`;
+                                })()}</span>
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2 text-xs mt-1 text-white/70">
@@ -2701,23 +2755,56 @@ export default function App() {
 
                           <div className="flex items-center gap-3 text-[10px] text-white/50 mt-1.5 font-mono flex-wrap">
                             <span>📚 {tourney.problems?.length || 0} Problems</span>
-                            <span>👥 {tourney.participants?.length || 0} Players Joined</span>
+                            <span>👥 {tourney.participants?.length || 0} Registered Competitors</span>
                             {tourney.startTime && (
                               <span className="text-amber-400/80">
-                                ⏰ Starts: {new Date(tourney.startTime).toLocaleDateString()} at {new Date(tourney.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                ⏰ Scheduled: {new Date(tourney.startTime).toLocaleDateString([], { month: 'short', day: 'numeric' })} at {new Date(tourney.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             )}
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                          {isActive ? (
+                          {isLive ? (
+                            isUserRegistered ? (
+                              <button
+                                onClick={() => handleEnterTournament(tourney)}
+                                className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md flex items-center gap-1.5 animate-pulse"
+                              >
+                                <span>Enter Arena</span>
+                                <span>→</span>
+                              </button>
+                            ) : !user ? (
+                              <button
+                                onClick={() => {
+                                  setShowTournamentsModal(false);
+                                  navigate('/login');
+                                }}
+                                className="bg-[#2b2926] hover:bg-[#383531] text-white/80 font-bold text-xs px-3.5 py-2.5 rounded-xl border border-white/10 transition cursor-pointer"
+                              >
+                                Log in to verify
+                              </button>
+                            ) : (
+                              <div className="flex flex-col items-end">
+                                <button
+                                  disabled
+                                  className="bg-red-500/10 text-red-400 font-bold text-xs px-3.5 py-2 rounded-xl border border-red-500/30 cursor-not-allowed flex items-center gap-1.5"
+                                  title="Registration closed. Only players registered before start time can join."
+                                >
+                                  <span>🔒</span>
+                                  <span>Registration Closed</span>
+                                </button>
+                                <span className="text-[9px] text-white/40 mt-1 font-sans">
+                                  Pre-registration required
+                                </span>
+                              </div>
+                            )
+                          ) : isPast ? (
                             <button
-                              onClick={() => handleEnterTournament(tourney)}
-                              className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md flex items-center gap-1.5"
+                              onClick={() => setViewingAppLeaderboard(tourney)}
+                              className="bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 font-bold text-xs px-4 py-2 rounded-xl border border-sky-500/30 cursor-pointer"
                             >
-                              <span>Enter Arena</span>
-                              <span>→</span>
+                              🏆 Rankings
                             </button>
                           ) : !user ? (
                             <button
@@ -2727,7 +2814,7 @@ export default function App() {
                               }}
                               className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md"
                             >
-                              Log in to Join
+                              Log in to Register
                             </button>
                           ) : isUserRegistered ? (
                             <button
@@ -2743,7 +2830,7 @@ export default function App() {
                               disabled={registeringId === tourney._id}
                               className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-bold text-xs px-4 py-2.5 rounded-xl transition cursor-pointer shadow-md disabled:opacity-50"
                             >
-                              {registeringId === tourney._id ? 'Joining...' : 'Join Tournament'}
+                              {registeringId === tourney._id ? 'Registering...' : 'Register for Tournament'}
                             </button>
                           )}
                         </div>

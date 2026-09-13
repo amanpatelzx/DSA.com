@@ -3081,20 +3081,27 @@ export default function ProblemView() {
                 )}
               </div>
 
-              <button
-                onClick={handleRun}
-                disabled={isRunning}
-                className="bg-[#2b2926] hover:bg-[#363431] text-white text-xs font-semibold px-4 py-1.5 rounded-lg border border-white/10 transition disabled:opacity-50 cursor-pointer"
-              >
-                {isRunning ? 'Running...' : 'Run Code'}
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={isRunning}
-                className="bg-[#81b64c] hover:bg-[#92c55b] text-white text-xs font-bold px-5 py-1.5 rounded-lg shadow-md transition disabled:opacity-50 cursor-pointer"
-              >
-                Submit Solution
-              </button>
+              {isRunning ? (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#81b64c]/15 text-[#81b64c] border border-[#81b64c]/30 text-xs font-bold animate-pulse select-none">
+                  <div className="w-3.5 h-3.5 border-2 border-[#81b64c]/30 border-t-[#81b64c] rounded-full animate-spin"></div>
+                  <span>Code is running...</span>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleRun}
+                    className="bg-[#2b2926] hover:bg-[#363431] text-white text-xs font-semibold px-4 py-1.5 rounded-lg border border-white/10 transition cursor-pointer"
+                  >
+                    Run Code
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    className="bg-[#81b64c] hover:bg-[#92c55b] text-white text-xs font-bold px-5 py-1.5 rounded-lg shadow-md transition cursor-pointer"
+                  >
+                    Submit Solution
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -3430,7 +3437,13 @@ export default function ProblemView() {
             {/* TAB 2: TEST RESULT */}
             {activeBottomTab === 'result' && (
               <div className="flex-1 p-4 overflow-y-auto flex flex-col min-h-0 bg-[#171613]">
-                {!runResults ? (
+                {isRunning ? (
+                  <div className="flex flex-col items-center justify-center flex-1 text-center py-12 text-[#7d7b77] animate-in fade-in duration-200">
+                    <div className="w-10 h-10 border-3 border-[#81b64c]/30 border-t-[#81b64c] rounded-full animate-spin mb-3.5 shadow-md"></div>
+                    <p className="text-sm font-black text-white mb-1">Code is running...</p>
+                    <p className="text-xs text-[#8c8b88]">Evaluating test cases in sandboxed environment...</p>
+                  </div>
+                ) : !runResults ? (
                   <div className="flex flex-col items-center justify-center flex-1 text-center py-6 text-[#7d7b77]">
                     <p className="text-xs mb-3">You must run your code first to view the test result.</p>
                     <button

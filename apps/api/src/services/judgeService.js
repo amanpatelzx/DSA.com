@@ -32,13 +32,511 @@ export const normalizeOutput = (str) => {
       return s.replace(/\s+/g, '');
     }
   }
+  // Check if both are floating numbers (e.g. 2.0 vs 2.00000)
+  const num = Number(s);
+  if (!isNaN(num) && s !== '' && !s.includes(' ')) {
+    return Number(num.toFixed(5)).toString();
+  }
   return s;
 };
+
+// Precompiled C++ Header content providing standard algorithms, data structures, and parser helpers
+export const CPP_HARNESS_HEADER = `#ifndef DSA_HARNESS_H
+#define DSA_HARNESS_H
+
+#include <iostream>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <map>
+#include <set>
+#include <queue>
+#include <stack>
+#include <climits>
+#include <cmath>
+
+using namespace std;
+
+// Definition for singly-linked list
+struct ListNode {
+    int val;
+    ListNode *next;
+    ListNode() : val(0), next(nullptr) {}
+    ListNode(int x) : val(x), next(nullptr) {}
+    ListNode(int x, ListNode *next) : val(x), next(next) {}
+};
+
+// Definition for a binary tree node
+struct TreeNode {
+    int val;
+    TreeNode *left;
+    TreeNode *right;
+    TreeNode() : val(0), left(nullptr), right(nullptr) {}
+    TreeNode(int x) : val(x), left(nullptr), right(nullptr) {}
+    TreeNode(int x, TreeNode *left, TreeNode *right) : val(x), left(left), right(right) {}
+};
+
+// Utility parsing functions
+inline string trim(const string& s) {
+    size_t f = s.find_first_not_of(" \\t\\r\\n");
+    if (f == string::npos) return "";
+    size_t l = s.find_last_not_of(" \\t\\r\\n");
+    return s.substr(f, l - f + 1);
+}
+
+inline string extractParamRaw(const string& allInput, const string& key, int paramIndex = 0) {
+    if (!key.empty()) {
+        size_t pos = allInput.find(key);
+        while (pos != string::npos) {
+            bool leftOk = (pos == 0 || (!isalnum(allInput[pos - 1]) && allInput[pos - 1] != '_'));
+            bool rightOk = (pos + key.size() >= allInput.size() || (!isalnum(allInput[pos + key.size()]) && allInput[pos + key.size()] != '_'));
+            if (leftOk && rightOk) {
+                size_t eq = allInput.find('=', pos + key.size());
+                if (eq != string::npos) {
+                    size_t i = eq + 1;
+                    while (i < allInput.size() && (allInput[i] == ' ' || allInput[i] == '\\t')) i++;
+                    int bracketDepth = 0;
+                    bool inStr = false;
+                    char quoteChar = 0;
+                    size_t valStart = i;
+                    while (i < allInput.size()) {
+                        char c = allInput[i];
+                        if ((c == '"' || c == '\\'') && (i == 0 || allInput[i - 1] != '\\\\')) {
+                            if (!inStr) { inStr = true; quoteChar = c; }
+                            else if (c == quoteChar) { inStr = false; }
+                        } else if (!inStr) {
+                            if (c == '[' || c == '{' || c == '(') bracketDepth++;
+                            else if (c == ']' || c == '}' || c == ')') bracketDepth--;
+                            else if (bracketDepth == 0 && (c == ',' || c == '\\n' || c == '\\r')) {
+                                break;
+                            }
+                        }
+                        i++;
+                    }
+                    return trim(allInput.substr(valStart, i - valStart));
+                }
+            }
+            pos = allInput.find(key, pos + 1);
+        }
+    }
+
+    // Positional fallback: split top-level parameters by comma
+    vector<string> parts;
+    int bracketDepth = 0;
+    bool inStr = false;
+    char quoteChar = 0;
+    size_t start = 0;
+    for (size_t i = 0; i < allInput.size(); i++) {
+        char c = allInput[i];
+        if ((c == '"' || c == '\\'') && (i == 0 || allInput[i - 1] != '\\\\')) {
+            if (!inStr) { inStr = true; quoteChar = c; }
+            else if (c == quoteChar) { inStr = false; }
+        } else if (!inStr) {
+            if (c == '[' || c == '{' || c == '(') bracketDepth++;
+            else if (c == ']' || c == '}' || c == ')') bracketDepth--;
+            else if (bracketDepth == 0 && (c == ',' || c == '\\n' || c == '\\r')) {
+                if (i > start) {
+                    parts.push_back(trim(allInput.substr(start, i - start)));
+                }
+                start = i + 1;
+            }
+        }
+    }
+    if (start < allInput.size()) {
+        parts.push_back(trim(allInput.substr(start)));
+    }
+
+    if (paramIndex >= 0 && paramIndex < (int)parts.size()) {
+        string p = parts[paramIndex];
+        size_t eq = p.find('=');
+        if (eq != string::npos) return trim(p.substr(eq + 1));
+        return p;
+    }
+
+    return trim(allInput);
+}
+
+inline int parseInt(const string& allInput, const string& key, int idx = 0) {
+    string raw = extractParamRaw(allInput, key, idx);
+    try { return stoi(raw); } catch (...) { return 0; }
+}
+
+inline long long parseLong(const string& allInput, const string& key, int idx = 0) {
+    string raw = extractParamRaw(allInput, key, idx);
+    try { return stoll(raw); } catch (...) { return 0LL; }
+}
+
+inline double parseDouble(const string& allInput, const string& key, int idx = 0) {
+    string raw = extractParamRaw(allInput, key, idx);
+    try { return stod(raw); } catch (...) { return 0.0; }
+}
+
+inline bool parseBool(const string& allInput, const string& key, int idx = 0) {
+    string raw = extractParamRaw(allInput, key, idx);
+    for (auto &c : raw) c = tolower(c);
+    return (raw == "true" || raw == "1");
+}
+
+inline string parseString(const string& allInput, const string& key, int idx = 0) {
+    string raw = extractParamRaw(allInput, key, idx);
+    size_t q1 = raw.find('"');
+    if (q1 != string::npos) {
+        size_t q2 = raw.rfind('"');
+        if (q2 != string::npos && q2 > q1) {
+            return raw.substr(q1 + 1, q2 - q1 - 1);
+        }
+    }
+    return raw;
+}
+
+inline char parseChar(const string& allInput, const string& key, int idx = 0) {
+    string s = parseString(allInput, key, idx);
+    return s.empty() ? ' ' : s[0];
+}
+
+inline vector<int> parseVectorInt(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<int> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) {
+            try { res.push_back(stoi(t)); } catch (...) {}
+        }
+    }
+    return res;
+}
+
+inline vector<char> parseVectorChar(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<char> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) {
+            if ((t.front() == '"' || t.front() == '\\'') && t.size() >= 2) {
+                res.push_back(t[1]);
+            } else {
+                res.push_back(t[0]);
+            }
+        }
+    }
+    return res;
+}
+
+inline vector<string> parseVectorString(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<string> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) {
+            if (t.front() == '"' && t.back() == '"' && t.size() >= 2) {
+                res.push_back(t.substr(1, t.size() - 2));
+            } else {
+                res.push_back(t);
+            }
+        }
+    }
+    return res;
+}
+
+inline vector<vector<int>> parseVectorVectorInt(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<vector<int>> res;
+    size_t first = s.find('[');
+    size_t last = s.rfind(']');
+    if (first == string::npos || last == string::npos || last <= first) return res;
+    
+    string content = s.substr(first + 1, last - first - 1);
+    size_t i = 0;
+    while (i < content.size()) {
+        if (content[i] == '[') {
+            int depth = 1;
+            size_t j = i + 1;
+            while (j < content.size() && depth > 0) {
+                if (content[j] == '[') depth++;
+                else if (content[j] == ']') depth--;
+                if (depth == 0) break;
+                j++;
+            }
+            if (depth == 0 && j < content.size()) {
+                string inner = content.substr(i, j - i + 1);
+                res.push_back(parseVectorInt(inner, ""));
+                i = j + 1;
+            } else {
+                break;
+            }
+        } else {
+            i++;
+        }
+    }
+    return res;
+}
+
+inline vector<vector<char>> parseVectorVectorChar(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<vector<char>> res;
+    size_t first = s.find('[');
+    size_t last = s.rfind(']');
+    if (first == string::npos || last == string::npos || last <= first) return res;
+    
+    string content = s.substr(first + 1, last - first - 1);
+    size_t i = 0;
+    while (i < content.size()) {
+        if (content[i] == '[') {
+            int depth = 1;
+            size_t j = i + 1;
+            while (j < content.size() && depth > 0) {
+                if (content[j] == '[') depth++;
+                else if (content[j] == ']') depth--;
+                if (depth == 0) break;
+                j++;
+            }
+            if (depth == 0 && j < content.size()) {
+                string inner = content.substr(i, j - i + 1);
+                res.push_back(parseVectorChar(inner, ""));
+                i = j + 1;
+            } else {
+                break;
+            }
+        } else {
+            i++;
+        }
+    }
+    return res;
+}
+
+inline vector<vector<string>> parseVectorVectorString(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<vector<string>> res;
+    size_t first = s.find('[');
+    size_t last = s.rfind(']');
+    if (first == string::npos || last == string::npos || last <= first) return res;
+    
+    string content = s.substr(first + 1, last - first - 1);
+    size_t i = 0;
+    while (i < content.size()) {
+        if (content[i] == '[') {
+            int depth = 1;
+            size_t j = i + 1;
+            while (j < content.size() && depth > 0) {
+                if (content[j] == '[') depth++;
+                else if (content[j] == ']') depth--;
+                if (depth == 0) break;
+                j++;
+            }
+            if (depth == 0 && j < content.size()) {
+                string inner = content.substr(i, j - i + 1);
+                res.push_back(parseVectorString(inner, ""));
+                i = j + 1;
+            } else {
+                break;
+            }
+        } else {
+            i++;
+        }
+    }
+    return res;
+}
+
+inline ListNode* parseListNode(const string& allInput, const string& key, int idx = 0) {
+    vector<int> vals = parseVectorInt(allInput, key, idx);
+    if (vals.empty()) return nullptr;
+    ListNode dummy(0);
+    ListNode* curr = &dummy;
+    for (int v : vals) {
+        curr->next = new ListNode(v);
+        curr = curr->next;
+    }
+    return dummy.next;
+}
+
+inline vector<ListNode*> parseVectorListNode(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<ListNode*> res;
+    size_t first = s.find('[');
+    size_t last = s.rfind(']');
+    if (first == string::npos || last == string::npos || last <= first) return res;
+    string content = s.substr(first + 1, last - first - 1);
+    size_t i = 0;
+    while (i < content.size()) {
+        if (content[i] == '[') {
+            int depth = 1;
+            size_t j = i + 1;
+            while (j < content.size() && depth > 0) {
+                if (content[j] == '[') depth++;
+                else if (content[j] == ']') depth--;
+                if (depth == 0) break;
+                j++;
+            }
+            if (depth == 0 && j < content.size()) {
+                string inner = content.substr(i, j - i + 1);
+                res.push_back(parseListNode(inner, ""));
+                i = j + 1;
+            } else break;
+        } else i++;
+    }
+    return res;
+}
+
+inline TreeNode* parseTreeNode(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return nullptr;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    vector<string> tokens;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) tokens.push_back(t);
+    }
+    if (tokens.empty() || tokens[0] == "null") return nullptr;
+    
+    TreeNode* root = new TreeNode(stoi(tokens[0]));
+    queue<TreeNode*> q;
+    q.push(root);
+    size_t k = 1;
+    while (!q.empty() && k < tokens.size()) {
+        TreeNode* curr = q.front();
+        q.pop();
+        if (k < tokens.size()) {
+            if (tokens[k] != "null") {
+                curr->left = new TreeNode(stoi(tokens[k]));
+                q.push(curr->left);
+            }
+            k++;
+        }
+        if (k < tokens.size()) {
+            if (tokens[k] != "null") {
+                curr->right = new TreeNode(stoi(tokens[k]));
+                q.push(curr->right);
+            }
+            k++;
+        }
+    }
+    return root;
+}
+
+inline void printVector(const vector<int>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << v[i] << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorChar(const vector<char>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << "\\"" << v[i] << "\\"" << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorString(const vector<string>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << "\\"" << v[i] << "\\"" << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorVectorInt(const vector<vector<int>>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        printVector(v[i]);
+        if (i + 1 < v.size()) cout << ",";
+    }
+    cout << "]";
+}
+
+inline void printVectorVectorChar(const vector<vector<char>>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        printVectorChar(v[i]);
+        if (i + 1 < v.size()) cout << ",";
+    }
+    cout << "]";
+}
+
+inline void printVectorVectorString(const vector<vector<string>>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        printVectorString(v[i]);
+        if (i + 1 < v.size()) cout << ",";
+    }
+    cout << "]";
+}
+
+inline void printListNode(ListNode* head) {
+    cout << "[";
+    ListNode* curr = head;
+    while (curr) {
+        cout << curr->val;
+        if (curr->next) cout << ",";
+        curr = curr->next;
+    }
+    cout << "]";
+}
+
+inline void printTreeNode(TreeNode* root) {
+    if (!root) { cout << "[]"; return; }
+    vector<string> vals;
+    queue<TreeNode*> q;
+    q.push(root);
+    while (!q.empty()) {
+        TreeNode* curr = q.front();
+        q.pop();
+        if (curr) {
+            vals.push_back(to_string(curr->val));
+            q.push(curr->left);
+            q.push(curr->right);
+        } else {
+            vals.push_back("null");
+        }
+    }
+    while (!vals.empty() && vals.back() == "null") vals.pop_back();
+    cout << "[";
+    for (size_t i = 0; i < vals.size(); i++) {
+        cout << vals[i] << (i + 1 < vals.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+#endif
+`;
+
+// Shared PCH directory
+const PCH_DIR = path.join(os.tmpdir(), 'dsa_judge_pch');
+const PCH_HEADER = path.join(PCH_DIR, 'dsa_harness.h');
+const PCH_GCH = path.join(PCH_DIR, 'dsa_harness.h.gch');
+let isPchReady = false;
 
 // Generate C++ harness for problem
 const generateCppHarness = (slug, userCode, customMeta = null) => {
   if (userCode.includes('int main(') || userCode.includes('int main ()')) {
-    return userCode;
+    return `#include "dsa_harness.h"\n\n${userCode}`;
   }
 
   const meta = customMeta || leetcodeDataCache[slug]?.meta;
@@ -219,495 +717,16 @@ ${parseLines.join('\n')}
 `;
     }
   } else {
-    // Fallback handler if no meta
     dynamicExecution = `
     cout << allInput << endl;
 `;
   }
 
-  return `#include <iostream>
-#include <vector>
-#include <string>
-#include <sstream>
-#include <algorithm>
-#include <unordered_map>
-#include <unordered_set>
-#include <map>
-#include <set>
-#include <queue>
-#include <stack>
-#include <climits>
-#include <cmath>
-
-using namespace std;
-
-// Definition for singly-linked list
-struct ListNode {
-    int val;
-    ListNode *next;
-    ListNode() : val(0), next(nullptr) {}
-    ListNode(int x) : val(x), next(nullptr) {}
-    ListNode(int x, ListNode *next) : val(x), next(next) {}
-};
-
-// Definition for a binary tree node
-struct TreeNode {
-    int val;
-    TreeNode *left;
-    TreeNode *right;
-    TreeNode() : val(0), left(nullptr), right(nullptr) {}
-    TreeNode(int x) : val(x), left(nullptr), right(nullptr) {}
-    TreeNode(int x, TreeNode *left, TreeNode *right) : val(x), left(left), right(right) {}
-};
+  return `#include "dsa_harness.h"
 
 // --- USER CODE START ---
 ${userCode}
 // --- USER CODE END ---
-
-// Utility parsing functions
-string trim(const string& s) {
-    size_t f = s.find_first_not_of(" \\t\\r\\n");
-    if (f == string::npos) return "";
-    size_t l = s.find_last_not_of(" \\t\\r\\n");
-    return s.substr(f, l - f + 1);
-}
-
-string extractParamRaw(const string& allInput, const string& key, int paramIndex = 0) {
-    if (!key.empty()) {
-        size_t pos = allInput.find(key);
-        while (pos != string::npos) {
-            bool leftOk = (pos == 0 || (!isalnum(allInput[pos - 1]) && allInput[pos - 1] != '_'));
-            bool rightOk = (pos + key.size() >= allInput.size() || (!isalnum(allInput[pos + key.size()]) && allInput[pos + key.size()] != '_'));
-            if (leftOk && rightOk) {
-                size_t eq = allInput.find('=', pos + key.size());
-                if (eq != string::npos) {
-                    size_t i = eq + 1;
-                    while (i < allInput.size() && (allInput[i] == ' ' || allInput[i] == '\\t')) i++;
-                    int bracketDepth = 0;
-                    bool inStr = false;
-                    char quoteChar = 0;
-                    size_t valStart = i;
-                    while (i < allInput.size()) {
-                        char c = allInput[i];
-                        if ((c == '"' || c == '\\\'') && (i == 0 || allInput[i - 1] != '\\\\')) {
-                            if (!inStr) { inStr = true; quoteChar = c; }
-                            else if (c == quoteChar) { inStr = false; }
-                        } else if (!inStr) {
-                            if (c == '[' || c == '{' || c == '(') bracketDepth++;
-                            else if (c == ']' || c == '}' || c == ')') bracketDepth--;
-                            else if (bracketDepth == 0 && (c == ',' || c == '\\n' || c == '\\r')) {
-                                break;
-                            }
-                        }
-                        i++;
-                    }
-                    return trim(allInput.substr(valStart, i - valStart));
-                }
-            }
-            pos = allInput.find(key, pos + 1);
-        }
-    }
-
-    // Positional fallback: split top-level parameters by comma
-    vector<string> parts;
-    int bracketDepth = 0;
-    bool inStr = false;
-    char quoteChar = 0;
-    size_t start = 0;
-    for (size_t i = 0; i < allInput.size(); i++) {
-        char c = allInput[i];
-        if ((c == '"' || c == '\\\'') && (i == 0 || allInput[i - 1] != '\\\\')) {
-            if (!inStr) { inStr = true; quoteChar = c; }
-            else if (c == quoteChar) { inStr = false; }
-        } else if (!inStr) {
-            if (c == '[' || c == '{' || c == '(') bracketDepth++;
-            else if (c == ']' || c == '}' || c == ')') bracketDepth--;
-            else if (bracketDepth == 0 && (c == ',' || c == '\\n' || c == '\\r')) {
-                if (i > start) {
-                    parts.push_back(trim(allInput.substr(start, i - start)));
-                }
-                start = i + 1;
-            }
-        }
-    }
-    if (start < allInput.size()) {
-        parts.push_back(trim(allInput.substr(start)));
-    }
-
-    if (paramIndex >= 0 && paramIndex < (int)parts.size()) {
-        string p = parts[paramIndex];
-        size_t eq = p.find('=');
-        if (eq != string::npos) return trim(p.substr(eq + 1));
-        return p;
-    }
-
-    return trim(allInput);
-}
-
-int parseInt(const string& allInput, const string& key, int idx = 0) {
-    string raw = extractParamRaw(allInput, key, idx);
-    try { return stoi(raw); } catch (...) { return 0; }
-}
-
-long long parseLong(const string& allInput, const string& key, int idx = 0) {
-    string raw = extractParamRaw(allInput, key, idx);
-    try { return stoll(raw); } catch (...) { return 0LL; }
-}
-
-double parseDouble(const string& allInput, const string& key, int idx = 0) {
-    string raw = extractParamRaw(allInput, key, idx);
-    try { return stod(raw); } catch (...) { return 0.0; }
-}
-
-bool parseBool(const string& allInput, const string& key, int idx = 0) {
-    string raw = extractParamRaw(allInput, key, idx);
-    for (auto &c : raw) c = tolower(c);
-    return (raw == "true" || raw == "1");
-}
-
-string parseString(const string& allInput, const string& key, int idx = 0) {
-    string raw = extractParamRaw(allInput, key, idx);
-    size_t q1 = raw.find('"');
-    if (q1 != string::npos) {
-        size_t q2 = raw.rfind('"');
-        if (q2 != string::npos && q2 > q1) {
-            return raw.substr(q1 + 1, q2 - q1 - 1);
-        }
-    }
-    return raw;
-}
-
-char parseChar(const string& allInput, const string& key, int idx = 0) {
-    string s = parseString(allInput, key, idx);
-    return s.empty() ? ' ' : s[0];
-}
-
-vector<int> parseVectorInt(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<int> res;
-    size_t start = s.find('[');
-    size_t end = s.rfind(']');
-    if (start == string::npos || end == string::npos || end <= start) return res;
-    string inner = s.substr(start + 1, end - start - 1);
-    stringstream ss(inner);
-    string token;
-    while (getline(ss, token, ',')) {
-        string t = trim(token);
-        if (!t.empty()) {
-            try { res.push_back(stoi(t)); } catch (...) {}
-        }
-    }
-    return res;
-}
-
-vector<char> parseVectorChar(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<char> res;
-    size_t start = s.find('[');
-    size_t end = s.rfind(']');
-    if (start == string::npos || end == string::npos || end <= start) return res;
-    string inner = s.substr(start + 1, end - start - 1);
-    stringstream ss(inner);
-    string token;
-    while (getline(ss, token, ',')) {
-        string t = trim(token);
-        if (!t.empty()) {
-            if ((t.front() == '"' || t.front() == '\\\'') && t.size() >= 2) {
-                res.push_back(t[1]);
-            } else {
-                res.push_back(t[0]);
-            }
-        }
-    }
-    return res;
-}
-
-vector<string> parseVectorString(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<string> res;
-    size_t start = s.find('[');
-    size_t end = s.rfind(']');
-    if (start == string::npos || end == string::npos || end <= start) return res;
-    string inner = s.substr(start + 1, end - start - 1);
-    stringstream ss(inner);
-    string token;
-    while (getline(ss, token, ',')) {
-        string t = trim(token);
-        if (!t.empty()) {
-            if (t.front() == '"' && t.back() == '"' && t.size() >= 2) {
-                res.push_back(t.substr(1, t.size() - 2));
-            } else {
-                res.push_back(t);
-            }
-        }
-    }
-    return res;
-}
-
-vector<vector<int>> parseVectorVectorInt(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<vector<int>> res;
-    size_t first = s.find('[');
-    size_t last = s.rfind(']');
-    if (first == string::npos || last == string::npos || last <= first) return res;
-    
-    string content = s.substr(first + 1, last - first - 1);
-    size_t i = 0;
-    while (i < content.size()) {
-        if (content[i] == '[') {
-            int depth = 1;
-            size_t j = i + 1;
-            while (j < content.size() && depth > 0) {
-                if (content[j] == '[') depth++;
-                else if (content[j] == ']') depth--;
-                if (depth == 0) break;
-                j++;
-            }
-            if (depth == 0 && j < content.size()) {
-                string inner = content.substr(i, j - i + 1);
-                res.push_back(parseVectorInt(inner, ""));
-                i = j + 1;
-            } else {
-                break;
-            }
-        } else {
-            i++;
-        }
-    }
-    return res;
-}
-
-vector<vector<char>> parseVectorVectorChar(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<vector<char>> res;
-    size_t first = s.find('[');
-    size_t last = s.rfind(']');
-    if (first == string::npos || last == string::npos || last <= first) return res;
-    
-    string content = s.substr(first + 1, last - first - 1);
-    size_t i = 0;
-    while (i < content.size()) {
-        if (content[i] == '[') {
-            int depth = 1;
-            size_t j = i + 1;
-            while (j < content.size() && depth > 0) {
-                if (content[j] == '[') depth++;
-                else if (content[j] == ']') depth--;
-                if (depth == 0) break;
-                j++;
-            }
-            if (depth == 0 && j < content.size()) {
-                string inner = content.substr(i, j - i + 1);
-                res.push_back(parseVectorChar(inner, ""));
-                i = j + 1;
-            } else {
-                break;
-            }
-        } else {
-            i++;
-        }
-    }
-    return res;
-}
-
-vector<vector<string>> parseVectorVectorString(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<vector<string>> res;
-    size_t first = s.find('[');
-    size_t last = s.rfind(']');
-    if (first == string::npos || last == string::npos || last <= first) return res;
-    
-    string content = s.substr(first + 1, last - first - 1);
-    size_t i = 0;
-    while (i < content.size()) {
-        if (content[i] == '[') {
-            int depth = 1;
-            size_t j = i + 1;
-            while (j < content.size() && depth > 0) {
-                if (content[j] == '[') depth++;
-                else if (content[j] == ']') depth--;
-                if (depth == 0) break;
-                j++;
-            }
-            if (depth == 0 && j < content.size()) {
-                string inner = content.substr(i, j - i + 1);
-                res.push_back(parseVectorString(inner, ""));
-                i = j + 1;
-            } else {
-                break;
-            }
-        } else {
-            i++;
-        }
-    }
-    return res;
-}
-
-ListNode* parseListNode(const string& allInput, const string& key, int idx = 0) {
-    vector<int> vals = parseVectorInt(allInput, key, idx);
-    if (vals.empty()) return nullptr;
-    ListNode dummy(0);
-    ListNode* curr = &dummy;
-    for (int v : vals) {
-        curr->next = new ListNode(v);
-        curr = curr->next;
-    }
-    return dummy.next;
-}
-
-vector<ListNode*> parseVectorListNode(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    vector<ListNode*> res;
-    size_t first = s.find('[');
-    size_t last = s.rfind(']');
-    if (first == string::npos || last == string::npos || last <= first) return res;
-    string content = s.substr(first + 1, last - first - 1);
-    size_t i = 0;
-    while (i < content.size()) {
-        if (content[i] == '[') {
-            int depth = 1;
-            size_t j = i + 1;
-            while (j < content.size() && depth > 0) {
-                if (content[j] == '[') depth++;
-                else if (content[j] == ']') depth--;
-                if (depth == 0) break;
-                j++;
-            }
-            if (depth == 0 && j < content.size()) {
-                string inner = content.substr(i, j - i + 1);
-                res.push_back(parseListNode(inner, ""));
-                i = j + 1;
-            } else break;
-        } else i++;
-    }
-    return res;
-}
-
-TreeNode* parseTreeNode(const string& allInput, const string& key, int idx = 0) {
-    string s = extractParamRaw(allInput, key, idx);
-    size_t start = s.find('[');
-    size_t end = s.rfind(']');
-    if (start == string::npos || end == string::npos || end <= start) return nullptr;
-    string inner = s.substr(start + 1, end - start - 1);
-    stringstream ss(inner);
-    string token;
-    vector<string> tokens;
-    while (getline(ss, token, ',')) {
-        string t = trim(token);
-        if (!t.empty()) tokens.push_back(t);
-    }
-    if (tokens.empty() || tokens[0] == "null") return nullptr;
-    
-    TreeNode* root = new TreeNode(stoi(tokens[0]));
-    queue<TreeNode*> q;
-    q.push(root);
-    size_t k = 1;
-    while (!q.empty() && k < tokens.size()) {
-        TreeNode* curr = q.front();
-        q.pop();
-        if (k < tokens.size()) {
-            if (tokens[k] != "null") {
-                curr->left = new TreeNode(stoi(tokens[k]));
-                q.push(curr->left);
-            }
-            k++;
-        }
-        if (k < tokens.size()) {
-            if (tokens[k] != "null") {
-                curr->right = new TreeNode(stoi(tokens[k]));
-                q.push(curr->right);
-            }
-            k++;
-        }
-    }
-    return root;
-}
-
-void printVector(const vector<int>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        cout << v[i] << (i + 1 < v.size() ? "," : "");
-    }
-    cout << "]";
-}
-
-void printVectorChar(const vector<char>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        cout << "\\"" << v[i] << "\\"" << (i + 1 < v.size() ? "," : "");
-    }
-    cout << "]";
-}
-
-void printVectorString(const vector<string>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        cout << "\\"" << v[i] << "\\"" << (i + 1 < v.size() ? "," : "");
-    }
-    cout << "]";
-}
-
-void printVectorVectorInt(const vector<vector<int>>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        printVector(v[i]);
-        if (i + 1 < v.size()) cout << ",";
-    }
-    cout << "]";
-}
-
-void printVectorVectorChar(const vector<vector<char>>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        printVectorChar(v[i]);
-        if (i + 1 < v.size()) cout << ",";
-    }
-    cout << "]";
-}
-
-void printVectorVectorString(const vector<vector<string>>& v) {
-    cout << "[";
-    for (size_t i = 0; i < v.size(); i++) {
-        printVectorString(v[i]);
-        if (i + 1 < v.size()) cout << ",";
-    }
-    cout << "]";
-}
-
-void printListNode(ListNode* head) {
-    cout << "[";
-    ListNode* curr = head;
-    while (curr) {
-        cout << curr->val;
-        if (curr->next) cout << ",";
-        curr = curr->next;
-    }
-    cout << "]";
-}
-
-void printTreeNode(TreeNode* root) {
-    if (!root) { cout << "[]"; return; }
-    vector<string> vals;
-    queue<TreeNode*> q;
-    q.push(root);
-    while (!q.empty()) {
-        TreeNode* curr = q.front();
-        q.pop();
-        if (curr) {
-            vals.push_back(to_string(curr->val));
-            q.push(curr->left);
-            q.push(curr->right);
-        } else {
-            vals.push_back("null");
-        }
-    }
-    while (!vals.empty() && vals.back() == "null") vals.pop_back();
-    cout << "[";
-    for (size_t i = 0; i < vals.size(); i++) {
-        cout << vals[i] << (i + 1 < vals.size() ? "," : "");
-    }
-    cout << "]";
-}
 
 int main() {
     ios_base::sync_with_stdio(false);
@@ -1816,9 +1835,11 @@ const executeCommand = (cmd, args = [], inputData, timeoutMs = 2500) => {
       clearTimeout(timer);
       const executionTime = Date.now() - startTime;
       resolve({
-        code,
+        code: timedOut ? 124 : code,
         stdout: stdout.trim(),
-        stderr: stderr.trim(),
+        stderr: timedOut 
+          ? (stderr.trim() ? `${stderr.trim()}\nTime Limit Exceeded (${timeoutMs} ms)` : `Time Limit Exceeded (${timeoutMs} ms)`)
+          : stderr.trim(),
         timedOut,
         executionTime
       });
@@ -1836,6 +1857,27 @@ const executeCommand = (cmd, args = [], inputData, timeoutMs = 2500) => {
     });
   });
 };
+
+// Initialize Precompiled Header asynchronously on node startup
+const initCppPch = async () => {
+  try {
+    if (!fs.existsSync(PCH_DIR)) {
+      fs.mkdirSync(PCH_DIR, { recursive: true });
+    }
+    fs.writeFileSync(PCH_HEADER, CPP_HARNESS_HEADER);
+    const compilePchRes = await executeCommand('g++', ['-std=c++20', '-O0', PCH_HEADER, '-o', PCH_GCH], null, 30000);
+    if (compilePchRes.code === 0 && fs.existsSync(PCH_GCH)) {
+      isPchReady = true;
+      console.log('[Judge] C++ PCH generated successfully for fast compilation.');
+    } else {
+      console.warn('[Judge] PCH generation notice (falling back to standard headers):', compilePchRes.stderr || 'code ' + compilePchRes.code);
+    }
+  } catch (e) {
+    console.warn('[Judge] PCH initialization notice:', e.message);
+  }
+};
+// Kick off PCH generation in background
+initCppPch();
 
 /**
  * Main Judge Engine: Executes user code against given test cases.
@@ -1868,17 +1910,29 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
     if (normLang === 'cpp' || normLang === 'c' || normLang === 'c++') {
       const srcFile = path.join(tempDir, 'solution.cpp');
       compiledExecutable = path.join(tempDir, os.platform() === 'win32' ? 'solution.exe' : 'solution');
+
+      // Ensure dsa_harness.h is available in tempDir as well
+      try {
+        if (!fs.existsSync(path.join(tempDir, 'dsa_harness.h'))) {
+          fs.writeFileSync(path.join(tempDir, 'dsa_harness.h'), CPP_HARNESS_HEADER);
+        }
+      } catch {}
+
       const cppHarness = generateCppHarness(slug, code, meta);
       fs.writeFileSync(srcFile, cppHarness);
 
-      // Compile with g++
-      const compileRes = await executeCommand('g++', ['-std=c++20', srcFile, '-o', compiledExecutable], null, 7000);
+      // Compile with g++ using -O0 and PCH directory
+      const compileArgs = ['-std=c++20', '-O0', `-I${PCH_DIR}`, `-I${tempDir}`, srcFile, '-o', compiledExecutable];
+      const compileRes = await executeCommand('g++', compileArgs, null, 15000);
       if (compileRes.code !== 0) {
+        const errLog = compileRes.timedOut
+          ? 'Compilation Timed Out: Compiler exceeded 15000ms limit.'
+          : (compileRes.stderr || compileRes.stdout || 'Compilation failed');
         return {
           status: 'Compilation Error',
           runtime: '0 ms',
           memory: '0 MB',
-          errorMessage: compileRes.stderr || compileRes.stdout || 'Compilation failed',
+          errorMessage: errLog,
           cases: testcases.map((tc, idx) => ({
             id: tc.id || idx + 1,
             name: tc.name || `Case ${idx + 1}`,
@@ -1886,7 +1940,7 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
             output: '',
             expected: tc.expected,
             passed: false,
-            error: compileRes.stderr || 'Compilation Error'
+            error: errLog
           }))
         };
       }
@@ -1899,13 +1953,19 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
       fs.writeFileSync(srcFile, javaHarness);
 
       // Compile with javac
-      const compileRes = await executeCommand('javac', [srcFile], null, 7000);
+      const compileRes = await executeCommand('javac', [srcFile], null, 15000);
       if (compileRes.code !== 0) {
+        const isMissingJavac = compileRes.stderr && (compileRes.stderr.includes('ENOENT') || compileRes.stderr.includes('not found'));
+        const errLog = isMissingJavac
+          ? 'Java compiler (javac) is not available on this cloud judge instance. Please use C++, Python, or JavaScript.'
+          : (compileRes.timedOut
+            ? 'Java Compilation Timed Out: javac exceeded 15000ms limit.'
+            : (compileRes.stderr || compileRes.stdout || 'Java Compilation failed'));
         return {
           status: 'Compilation Error',
           runtime: '0 ms',
           memory: '0 MB',
-          errorMessage: compileRes.stderr || compileRes.stdout || 'Java Compilation failed',
+          errorMessage: errLog,
           cases: testcases.map((tc, idx) => ({
             id: tc.id || idx + 1,
             name: tc.name || `Case ${idx + 1}`,
@@ -1913,7 +1973,7 @@ export const judgeRun = async ({ language = 'cpp', code, slug = 'two-sum', testc
             output: '',
             expected: tc.expected,
             passed: false,
-            error: compileRes.stderr || 'Java Compilation Error'
+            error: errLog
           }))
         };
       }

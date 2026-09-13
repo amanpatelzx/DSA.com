@@ -3857,6 +3857,16 @@ export default function ProblemView() {
               )}
             </div>
 
+            {/* Close button top right */}
+            <button
+              type="button"
+              onClick={() => setPracticeSolvedModal(null)}
+              className="absolute top-4 right-4 text-white/40 hover:text-white text-sm w-7 h-7 flex items-center justify-center rounded-lg hover:bg-white/10 transition cursor-pointer"
+              title="Close and stay on question"
+            >
+              ✕
+            </button>
+
             {/* Action Buttons */}
             <div className="flex flex-col gap-2.5">
               <button
@@ -3865,27 +3875,18 @@ export default function ProblemView() {
                 className="w-full bg-[#81b64c] hover:bg-[#92c55b] text-white font-black text-sm py-3.5 px-5 rounded-xl transition shadow-lg shadow-[#81b64c]/25 flex items-center justify-center gap-2 cursor-pointer group"
               >
                 <span>🎯</span>
-                <span>Solve More</span>
+                <span>Next Challenge</span>
                 <span className="group-hover:translate-x-1 transition-transform">→</span>
               </button>
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleNextPracticeProblem}
-                  className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-white/10 transition flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <span>⚡</span>
-                  <span>Next Problem</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPracticeSolvedModal(null)}
-                  className="flex-1 bg-[#2b2926] hover:bg-[#363431] text-white/70 hover:text-white font-bold text-xs py-2.5 px-3 rounded-xl border border-white/10 transition cursor-pointer"
-                >
-                  Review Code
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setPracticeSolvedModal(null)}
+                className="w-full bg-[#2b2926] hover:bg-[#363431] text-white/80 hover:text-white font-bold text-xs py-2.5 px-4 rounded-xl border border-white/10 transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>✕</span>
+                <span>Close</span>
+              </button>
             </div>
           </div>
         </div>

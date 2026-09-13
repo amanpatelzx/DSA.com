@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { protect } from '../middleware/authMiddleware.js';
 import BattleReport from '../models/BattleReport.js';
-import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage } from '../socket.js';
+import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage, getIO } from '../socket.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 import { getBotSolution } from '../utils/botSolutions.js';
 
@@ -470,8 +470,21 @@ router.post('/resign', protect, async (req, res) => {
       }
     }
 
-    if (req.body.battleId && liveBattles.has(req.body.battleId)) {
-      liveBattles.delete(req.body.battleId);
+    if (req.body.battleId) {
+      if (liveBattles.has(req.body.battleId)) {
+        liveBattles.delete(req.body.battleId);
+      }
+      try {
+        const io = getIO();
+        if (io) {
+          io.to(req.body.battleId).emit('battle:opponent_resigned', {
+            resignedUsername: user.username,
+            winnerUsername: opponentName || 'Opponent'
+          });
+        }
+      } catch (ioErr) {
+        console.warn('Socket broadcast error on resign:', ioErr.message);
+      }
     }
     broadcastPlatformStats();
 

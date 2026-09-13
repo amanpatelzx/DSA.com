@@ -776,6 +776,22 @@ export const initSocket = (httpServer) => {
       });
     });
 
+    // Relay peer resignation event so opponent immediately gets "You Won!"
+    socket.on('battle:resign', ({ battleId, resignedUsername, winnerUsername }) => {
+      if (!battleId) return;
+      const userRecord = socketToUser.get(socket.id);
+      const actualResignedUsername = resignedUsername || userRecord?.username || 'Opponent';
+
+      if (liveBattles.has(battleId)) {
+        liveBattles.delete(battleId);
+      }
+
+      socket.to(battleId).emit('battle:opponent_resigned', {
+        resignedUsername: actualResignedUsername,
+        winnerUsername: winnerUsername || 'You'
+      });
+    });
+
     // Request opponent code directly via socket
     socket.on('battle:request_opponent_code', ({ battleId, opponentUsername }) => {
       if (!battleId) return;

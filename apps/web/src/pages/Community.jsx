@@ -759,11 +759,24 @@ export default function Community() {
               <h3 className="text-lg font-bold text-white">
                 {friendSearch ? `No friends found matching "${friendSearch}"` : 'No Friends Added Yet'}
               </h3>
-              <p className="text-xs text-[#8c8b88] max-w-md">
-                {friendSearch
-                  ? 'Try a different search query or clear the filter.'
-                  : 'You have not added any friends yet. Visit player profiles from the Leaderboard tab to add them and duel in real time!'}
-              </p>
+              {friendSearch ? (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-xs text-[#8c8b88] max-w-md">
+                    No friends in your current list matched "{friendSearch}". Search the entire arena to connect with matching coders and challenge them!
+                  </p>
+                  <Link
+                    to={`/search?q=${encodeURIComponent(friendSearch)}`}
+                    className="mt-1 bg-[#81b64c] hover:bg-[#92c55b] text-black font-black text-xs px-4 py-2 rounded-xl transition shadow flex items-center gap-1.5"
+                  >
+                    <span>🔍</span>
+                    <span>Search all coders for "{friendSearch}"</span>
+                  </Link>
+                </div>
+              ) : (
+                <p className="text-xs text-[#8c8b88] max-w-md">
+                  You have not added any friends yet. Visit player profiles from the Leaderboard tab to add them and duel in real time!
+                </p>
+              )}
               {!friendSearch && (
                 <button
                   onClick={() => setActiveTab('leaderboard')}

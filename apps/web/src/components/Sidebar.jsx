@@ -1,13 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { useSocket } from '../context/SocketContext';
+import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Sidebar() {
   const { user, isLoggedIn, logout } = useAuth();
+  const { sendChallenge } = useSocket();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchContainerRef = useRef(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(() => localStorage.getItem('dsa_sidebar_collapsed') === 'true');
 
@@ -18,6 +25,44 @@ export default function Sidebar() {
       return next;
     });
   };
+
+  // Debounced search for players & friends
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await axios.get(`http://localhost:5000/api/users/search?q=${encodeURIComponent(q)}`);
+        setSearchResults(Array.isArray(res.data) ? res.data : []);
+      } catch (err) {
+        console.error('Sidebar live search error:', err);
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 200);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target)) {
+        if (!searchQuery.trim()) {
+          setSearchOpen(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [searchQuery]);
 
   const handleInterceptNav = (e, path) => {
     if (window.__DSA_ACTIVE_BATTLE__?.isRunning) {
@@ -40,7 +85,39 @@ export default function Sidebar() {
       navigate(targetPath);
       setSearchOpen(false);
       setSearchQuery('');
+      setSearchResults([]);
     }
+  };
+
+  const handleQuickChallenge = async (e, targetUsername) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      const [randomSlug] = await fetchRandomBattleProblems({ mode: 'Blitz', count: 1 });
+      sendChallenge({
+        toUsername: targetUsername,
+        mode: 'Blitz',
+        timeControl: '3 + 0',
+        isRated: true,
+        problemsCount: 1,
+        problemList: [randomSlug || 'two-sum'],
+        durationSeconds: 180
+      });
+      setSearchOpen(false);
+      setSearchQuery('');
+      setSearchResults([]);
+    } catch (err) {
+      console.warn('Quick challenge error:', err);
+    }
+  };
+
+  const handleSelectProfile = (e, targetUsername) => {
+    const targetPath = `/${targetUsername}`;
+    if (handleInterceptNav(e, targetPath)) return;
+    navigate(targetPath);
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
   };
 
   const navLinks = [
@@ -281,23 +358,138 @@ export default function Sidebar() {
               </div>
             </button>
           ) : searchOpen ? (
-            <form onSubmit={handleSearch} className="relative">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search players..."
-                autoFocus
-                className="w-full bg-[#2b2926] text-white text-xs px-3 py-2 rounded-lg border border-white/15 focus:outline-none focus:border-[#81b64c]"
-              />
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="absolute right-2 top-2 text-white/40 hover:text-white text-xs"
-              >
-                ✕
-              </button>
-            </form>
+            <div ref={searchContainerRef} className="relative">
+              <form onSubmit={handleSearch} className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search friend / coder..."
+                  autoFocus
+                  className="w-full bg-[#2b2926] text-white text-xs pl-2.5 pr-7 py-2 rounded-lg border border-white/15 focus:outline-none focus:border-[#81b64c]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchOpen(false);
+                    setSearchQuery('');
+                    setSearchResults([]);
+                  }}
+                  className="absolute right-2 top-2 text-white/40 hover:text-white text-xs cursor-pointer"
+                >
+                  ✕
+                </button>
+              </form>
+
+              {/* Floating Match Profile Dropdown */}
+              {searchQuery.trim().length > 0 && (
+                <div className="absolute bottom-full left-0 mb-2 w-72 sm:w-80 bg-[#1e1d1a] border border-white/15 rounded-2xl shadow-2xl shadow-black/80 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  {/* Header */}
+                  <div className="px-3.5 py-2 bg-[#252421] border-b border-white/5 flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-white/70 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>👥</span>
+                      <span>Top Matching Profiles</span>
+                    </span>
+                    {isSearching ? (
+                      <div className="w-3.5 h-3.5 border-2 border-[#81b64c]/30 border-t-[#81b64c] rounded-full animate-spin"></div>
+                    ) : (
+                      <span className="text-[10px] text-white/40 font-mono">
+                        {searchResults.length} {searchResults.length === 1 ? 'match' : 'matches'}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Profile List */}
+                  <div className="max-h-72 overflow-y-auto divide-y divide-white/5">
+                    {isSearching && searchResults.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-[#8c8b88] flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-[#81b64c]/30 border-t-[#81b64c] rounded-full animate-spin"></div>
+                        <span>Finding matching coders...</span>
+                      </div>
+                    ) : searchResults.length === 0 ? (
+                      <div className="p-4 text-center text-xs text-[#8c8b88]">
+                        <span className="text-xl block mb-1">🔍</span>
+                        <span>No coders found for "{searchQuery}"</span>
+                      </div>
+                    ) : (
+                      searchResults.slice(0, 6).map((matchUser) => (
+                        <div
+                          key={matchUser._id || matchUser.username}
+                          onClick={(e) => handleSelectProfile(e, matchUser.username)}
+                          className="p-2.5 hover:bg-[#282622] transition flex items-center justify-between gap-2.5 cursor-pointer group"
+                        >
+                          {/* Left: Avatar Profile Icon + Names */}
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative shrink-0">
+                              {matchUser.avatar ? (
+                                <img
+                                  src={matchUser.avatar}
+                                  alt={matchUser.username}
+                                  className="w-9 h-9 rounded-xl object-cover border border-white/10"
+                                />
+                              ) : (
+                                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-green-500 text-white font-extrabold flex items-center justify-center text-xs shadow-sm">
+                                  {(matchUser.displayName || matchUser.username).charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                              {matchUser.isOnline && (
+                                <span
+                                  title="Online Now"
+                                  className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-[#1e1d1a]"
+                                />
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-xs text-white group-hover:text-[#81b64c] transition truncate">
+                                  {matchUser.displayName || matchUser.username}
+                                </span>
+                                {matchUser.countryFlag && (
+                                  <span className="text-xs">{matchUser.countryFlag}</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 text-[10px] text-white/50">
+                                <span>@{matchUser.username}</span>
+                                <span>•</span>
+                                <span className="text-yellow-400 font-mono font-semibold">
+                                  ⚡ {matchUser.ratings?.blitz ?? 1500}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Right: Quick Action Buttons */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={(e) => handleQuickChallenge(e, matchUser.username)}
+                              title={`Challenge @${matchUser.username} to 1v1 Battle`}
+                              className="px-2 py-1 bg-[#81b64c]/20 hover:bg-[#81b64c] text-[#81b64c] hover:text-white border border-[#81b64c]/40 hover:border-[#81b64c] rounded-lg text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>⚔️</span>
+                              <span className="hidden sm:inline">Duel</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Footer link to all results */}
+                  {searchResults.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleSearch}
+                      className="w-full py-2 px-3 bg-[#181715] hover:bg-[#252320] text-center text-[11px] font-bold text-[#81b64c] hover:text-white border-t border-white/5 transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>View all results for "{searchQuery}"</span>
+                      <span>→</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           ) : (
             <button
               onClick={() => setSearchOpen(true)}

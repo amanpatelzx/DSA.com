@@ -118,11 +118,16 @@ router.get('/leaderboard', async (req, res) => {
 });
 
 // @route   GET /api/users/search
-// @desc    Search for users
+// @desc    Search for users with match relevance scoring and profile details
 // @access  Public
 router.get('/search', async (req, res) => {
   try {
     const query = (req.query.q || req.query.query || '').trim();
+    if (!query) {
+      return res.json([]);
+    }
+
+    const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const filter = {
       isBot: { $ne: true },
       role: { $ne: 'BOT' },
@@ -131,26 +136,50 @@ router.get('/search', async (req, res) => {
       },
       email: { 
         $not: /@example\.com|@test\.com|@bot\.local|@dummy\.com/i 
-      }
+      },
+      $or: [
+        { username: { $regex: escapedQuery, $options: 'i' } },
+        { displayName: { $regex: escapedQuery, $options: 'i' } }
+      ]
     };
-    if (query) {
-      filter.$and = [
-        {
-          $or: [
-            { username: { $regex: query, $options: 'i' } },
-            { displayName: { $regex: query, $options: 'i' } }
-          ]
-        }
-      ];
-    }
 
     const users = await User.find(filter)
-      .select('username displayName ratings avatar role createdAt countryFlag')
-      .limit(20);
-    
-    res.json(users);
+      .select('username displayName ratings avatar role createdAt countryFlag bio streak')
+      .limit(30)
+      .lean();
+
+    const qLower = query.toLowerCase();
+
+    // Sort by best match relevance
+    const rankedUsers = users.map(u => {
+      const uName = (u.username || '').toLowerCase();
+      const dName = (u.displayName || '').toLowerCase();
+      let matchScore = 0;
+
+      if (uName === qLower) matchScore += 100;
+      else if (dName === qLower) matchScore += 90;
+      else if (uName.startsWith(qLower)) matchScore += 70;
+      else if (dName.startsWith(qLower)) matchScore += 60;
+      else if (uName.includes(qLower)) matchScore += 40;
+      else if (dName.includes(qLower)) matchScore += 30;
+      else matchScore += 10;
+
+      // Small bonus for rating
+      const rating = (u.ratings?.blitz || 1500);
+      matchScore += Math.min(20, Math.floor(rating / 100));
+
+      return {
+        ...u,
+        isOnline: isUserOnline ? isUserOnline(u.username) : false,
+        matchScore
+      };
+    });
+
+    rankedUsers.sort((a, b) => b.matchScore - a.matchScore);
+
+    res.json(rankedUsers);
   } catch (error) {
-    console.error(error);
+    console.error('User search error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

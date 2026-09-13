@@ -979,6 +979,22 @@ export default function ProblemView() {
           fetchOpponentBattleCode(battleIdRef.current);
         }
       });
+
+      socket.on('battle:opponent_resigned', ({ resignedUsername, winnerUsername }) => {
+        setOpponentResigned(true);
+        setShowOpponentResignedModal(true);
+        clearBattleSession(true);
+        setTimerActive(false);
+        playVictorySound();
+        if (window.__DSA_ACTIVE_BATTLE__) {
+          window.__DSA_ACTIVE_BATTLE__.isRunning = false;
+          window.__DSA_ACTIVE_BATTLE__ = null;
+        }
+        isBattleRunningRef.current = false;
+        if (refreshUser) {
+          refreshUser();
+        }
+      });
     } catch (err) {
       console.warn('Live battle socket connect warning:', err);
     }
@@ -1352,12 +1368,14 @@ export default function ProblemView() {
 
   // Active Battle Lock & Resignation System
   const [showResignModal, setShowResignModal] = useState(false);
+  const [opponentResigned, setOpponentResigned] = useState(false);
+  const [showOpponentResignedModal, setShowOpponentResignedModal] = useState(false);
   const [pendingNavigationPath, setPendingNavigationPath] = useState('/');
   const [isResigning, setIsResigning] = useState(false);
   const isBattleRunningRef = useRef(false);
 
-  // A battle is running if isChallenge is active, timer is active, and match is not yet finished
-  const isBattleRunning = Boolean(isChallenge && !matchResult && timerActive && timeLeft > 0);
+  // A battle is running if isChallenge is active, timer is active, opponent hasn't resigned, and match is not yet finished
+  const isBattleRunning = Boolean(isChallenge && !matchResult && !opponentResigned && timerActive && timeLeft > 0);
 
   useEffect(() => {
     isBattleRunningRef.current = isBattleRunning;
@@ -1371,6 +1389,10 @@ export default function ProblemView() {
     window.__DSA_ACTIVE_BATTLE__ = {
       isRunning: true,
       promptResign: (targetPath) => {
+        if (opponentResigned) {
+          navigate(targetPath || '/');
+          return;
+        }
         setPendingNavigationPath(targetPath || '/');
         setShowResignModal(true);
       }
@@ -1405,9 +1427,13 @@ export default function ProblemView() {
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [isBattleRunning]);
+  }, [isBattleRunning, opponentResigned]);
 
   const handlePromptResign = (targetPath = '/') => {
+    if (opponentResigned) {
+      navigate(targetPath);
+      return;
+    }
     setPendingNavigationPath(targetPath);
     setShowResignModal(true);
   };
@@ -1417,6 +1443,16 @@ export default function ProblemView() {
     setIsResigning(true);
 
     try {
+      if (socketRef.current) {
+        try {
+          socketRef.current.emit('battle:resign', {
+            battleId: battleIdRef.current,
+            resignedUsername: activeUsername,
+            winnerUsername: opponentParam
+          });
+        } catch {}
+      }
+
       const activeToken = localStorage.getItem('token') || token;
 
       if (activeToken) {
@@ -1424,6 +1460,7 @@ export default function ProblemView() {
           await axios.post(
             'http://localhost:5000/api/battles/resign',
             {
+              battleId: battleIdRef.current,
               mode,
               timeControl: timeControlParam,
               problemTitle: problem?.title || activeSlug,
@@ -2421,9 +2458,15 @@ export default function ProblemView() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => handlePromptResign('/')}
+              onClick={() => {
+                if (opponentResigned) {
+                  navigate('/');
+                } else {
+                  handlePromptResign('/');
+                }
+              }}
               className="text-white/60 hover:text-red-400 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer group"
-              title="Resign this match and return to Arena"
+              title={opponentResigned ? "Return to Arena" : "Resign this match and return to Arena"}
             >
               <span className="group-hover:-translate-x-0.5 transition-transform font-bold">←</span>
               <span>Leave</span>
@@ -2448,15 +2491,22 @@ export default function ProblemView() {
                 <span className="sm:hidden">Unrated</span>
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => handlePromptResign('/')}
-              className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 text-[11px] font-bold px-2.5 py-0.5 rounded-md transition cursor-pointer flex items-center gap-1 ml-1"
-              title="Resign this match and forfeit"
-            >
-              <span>🏳️</span>
-              <span className="hidden sm:inline">Resign</span>
-            </button>
+            {opponentResigned ? (
+              <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[11px] font-extrabold px-3 py-1 rounded-md flex items-center gap-1.5 shadow-sm animate-pulse ml-1">
+                <span>🏆</span>
+                <span>You Won!</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handlePromptResign('/')}
+                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-400 hover:text-red-300 text-[11px] font-bold px-2.5 py-0.5 rounded-md transition cursor-pointer flex items-center gap-1 ml-1"
+                title="Resign this match and forfeit"
+              >
+                <span>🏳️</span>
+                <span className="hidden sm:inline">Resign</span>
+              </button>
+            )}
           </div>
 
           {/* Center: Match Countdown Timer */}
@@ -4293,6 +4343,83 @@ export default function ProblemView() {
             {toastReaction.type === 'error' ? '✗' : '✓'}
           </span>
           <span>{toastReaction.message}</span>
+        </div>
+      )}
+
+      {/* OPPONENT RESIGNED VICTORY MODAL */}
+      {showOpponentResignedModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-[#21201d] border border-emerald-500/40 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-emerald-500/15 blur-3xl rounded-full pointer-events-none" />
+
+            {/* Trophy celebration icon */}
+            <div className="w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 bg-gradient-to-tr from-emerald-600 via-green-500 to-lime-400 shadow-xl shadow-emerald-500/25 ring-4 ring-emerald-500/20 text-white">
+              🏆
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-black text-white mb-1 tracking-tight">
+              You Won!
+            </h2>
+            <p className="text-sm font-semibold text-emerald-400 mb-2">
+              Opponent Resigned From Battle
+            </p>
+            <p className="text-xs text-[#8c8b88] mb-6">
+              <strong className="text-white font-bold">@{opponentParam || 'Opponent'}</strong> has conceded the match. The victory is officially yours!
+            </p>
+
+            {/* Rating & Match stats summary */}
+            <div className="bg-[#181715] border border-white/10 rounded-2xl p-4 mb-6 text-left flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#8c8b88]">Match Result:</span>
+                <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  Victory (Conceded)
+                </span>
+              </div>
+              {isRated ? (
+                <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                  <span className="text-xs text-[#8c8b88]">Rating Adjustment:</span>
+                  <span className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1">
+                    <span>⚡</span>
+                    <span>+16 Elo (Rated Match)</span>
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                  <span className="text-xs text-[#8c8b88]">Mode:</span>
+                  <span className="text-xs font-bold text-amber-300">
+                    Practice / Non-Rated (Ratings Preserved)
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-white/5 pt-2.5">
+                <span className="text-xs text-[#8c8b88]">Status:</span>
+                <span className="text-xs text-white/80">
+                  You may return to the arena or stay to keep solving.
+                </span>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => setShowOpponentResignedModal(false)}
+                className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>💻</span>
+                <span>Keep Solving Problem</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="flex-1 bg-[#2b2926] hover:bg-[#363431] border border-white/10 text-white font-bold text-xs py-3 px-4 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>←</span>
+                <span>Return to Arena</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

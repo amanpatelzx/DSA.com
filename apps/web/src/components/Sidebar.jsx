@@ -7,7 +7,7 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Sidebar() {
   const { user, isLoggedIn, logout } = useAuth();
-  const { sendChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge } = useSocket();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -89,26 +89,15 @@ export default function Sidebar() {
     }
   };
 
-  const handleQuickChallenge = async (e, targetUsername) => {
+  const handleQuickChallenge = (e, targetUsername) => {
     e.preventDefault();
     e.stopPropagation();
-    try {
-      const [randomSlug] = await fetchRandomBattleProblems({ mode: 'Blitz', count: 1 });
-      sendChallenge({
-        toUsername: targetUsername,
-        mode: 'Blitz',
-        timeControl: '3 + 0',
-        isRated: true,
-        problemsCount: 1,
-        problemList: [randomSlug || 'two-sum'],
-        durationSeconds: 180
-      });
-      setSearchOpen(false);
-      setSearchQuery('');
-      setSearchResults([]);
-    } catch (err) {
-      console.warn('Quick challenge error:', err);
+    if (openDirectChallenge) {
+      openDirectChallenge(targetUsername, 'Blitz');
     }
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
   };
 
   const handleSelectProfile = (e, targetUsername) => {

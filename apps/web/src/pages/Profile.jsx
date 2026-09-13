@@ -9,7 +9,7 @@ export default function Profile() {
   const { username } = useParams();
   const [searchParams] = useSearchParams();
   const { user: authUser, token, isLoggedIn, refreshUser } = useAuth();
-  const { sendChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge } = useSocket();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -769,17 +769,10 @@ export default function Profile() {
   const { user, externalProfiles, matchHistory = [] } = profileData;
   const isOwnProfile = authUser && (user._id === authUser._id || user.username === authUser.username);
 
-  const handleChallengeUser = async (targetUsername, battleMode = 'Blitz') => {
-    const [randomSlug] = await fetchRandomBattleProblems({ mode: battleMode, count: 1 });
-    sendChallenge({
-      toUsername: targetUsername,
-      mode: battleMode,
-      timeControl: '3 + 0',
-      isRated: true,
-      problemsCount: 1,
-      problemList: [randomSlug || 'two-sum'],
-      durationSeconds: 180
-    });
+  const handleChallengeUser = (targetUsername, battleMode = 'Blitz') => {
+    if (openDirectChallenge) {
+      openDirectChallenge(targetUsername, battleMode);
+    }
   };
 
   // Compute active social and coding profiles for rendering

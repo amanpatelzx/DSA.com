@@ -3,6 +3,7 @@ import { io } from 'socket.io-client';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import API_BASE_URL from '../config/api';
+import ChallengeConfigModal from '../components/ChallengeConfigModal';
 
 const SocketContext = createContext(null);
 
@@ -18,6 +19,22 @@ export function SocketProvider({ children }) {
   const [outgoingChallenge, setOutgoingChallenge] = useState(null);
   const [declineNotification, setDeclineNotification] = useState(null);
   const [errorNotification, setErrorNotification] = useState(null);
+
+  // Direct Challenge Modal State (Image 2 format & match type picker)
+  const [directChallengeTarget, setDirectChallengeTarget] = useState(null);
+
+  const openDirectChallenge = useCallback((target, initialMode) => {
+    if (!target) return;
+    if (typeof target === 'string') {
+      setDirectChallengeTarget({ username: target, initialMode });
+    } else {
+      setDirectChallengeTarget({ ...target, initialMode: initialMode || target.initialMode });
+    }
+  }, []);
+
+  const closeDirectChallenge = useCallback(() => {
+    setDirectChallengeTarget(null);
+  }, []);
 
   // Incoming challenge countdown timer (35 seconds)
   const [incomingTimeLeft, setIncomingTimeLeft] = useState(35);
@@ -289,7 +306,9 @@ export function SocketProvider({ children }) {
         openChallenges,
         createOpenChallenge,
         acceptOpenChallenge,
-        cancelOpenChallenge
+        cancelOpenChallenge,
+        openDirectChallenge,
+        closeDirectChallenge
       }}
     >
       {children}
@@ -494,6 +513,13 @@ export function SocketProvider({ children }) {
           </div>
         </div>
       )}
+
+      {/* 5. DIRECT CHALLENGE CONFIGURATION MODAL (Image 2: 5 categories, rated toggle, option cards) */}
+      <ChallengeConfigModal
+        target={directChallengeTarget}
+        isOpen={Boolean(directChallengeTarget)}
+        onClose={closeDirectChallenge}
+      />
     </SocketContext.Provider>
   );
 }

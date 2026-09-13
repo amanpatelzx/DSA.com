@@ -6,7 +6,7 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Search() {
   const navigate = useNavigate();
-  const { sendChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge } = useSocket();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState(initialQuery);
@@ -14,20 +14,9 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [activeMode, setActiveMode] = useState('Blitz');
 
-  const handleChallenge = async (targetUsername) => {
-    try {
-      const [randomSlug] = await fetchRandomBattleProblems({ mode: activeMode, count: 1 });
-      sendChallenge({
-        toUsername: targetUsername,
-        mode: activeMode,
-        timeControl: activeMode === 'Rapid' ? '10 + 0' : activeMode === 'Bullet' ? '1 + 0' : '3 + 0',
-        isRated: true,
-        problemsCount: 1,
-        problemList: [randomSlug || 'two-sum'],
-        durationSeconds: activeMode === 'Rapid' ? 600 : activeMode === 'Bullet' ? 60 : 180
-      });
-    } catch (err) {
-      console.warn('Challenge error:', err);
+  const handleChallenge = (targetUsername) => {
+    if (openDirectChallenge) {
+      openDirectChallenge(targetUsername, activeMode);
     }
   };
 

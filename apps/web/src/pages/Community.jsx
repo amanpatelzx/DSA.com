@@ -7,21 +7,14 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Community() {
   const { user } = useAuth();
-  const { sendChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge } = useSocket();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const handleBattleUser = async (targetUsername, battleMode = 'Blitz') => {
-    const [randomSlug] = await fetchRandomBattleProblems({ mode: battleMode, count: 1 });
-    sendChallenge({
-      toUsername: targetUsername,
-      mode: battleMode,
-      timeControl: '3 + 0',
-      isRated: true,
-      problemsCount: 1,
-      problemList: [randomSlug || 'two-sum'],
-      durationSeconds: 180
-    });
+  const handleBattleUser = (targetUsername, battleMode = 'Blitz') => {
+    if (openDirectChallenge) {
+      openDirectChallenge(targetUsername, battleMode);
+    }
   };
 
   const [activeTab, setActiveTab] = useState(

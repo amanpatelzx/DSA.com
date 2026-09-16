@@ -9,7 +9,7 @@ export default function Profile() {
   const { username } = useParams();
   const [searchParams] = useSearchParams();
   const { user: authUser, token, isLoggedIn, refreshUser } = useAuth();
-  const { sendChallenge, openDirectChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge, isUserOnline } = useSocket();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -768,6 +768,9 @@ export default function Profile() {
 
   const { user, externalProfiles, matchHistory = [] } = profileData;
   const isOwnProfile = authUser && (user._id === authUser._id || user.username === authUser.username);
+  const isActuallyLive = isOwnProfile
+    ? true
+    : (typeof isUserOnline === 'function' ? isUserOnline(user?.username) : Boolean(user?.isOnline));
 
   const handleChallengeUser = (targetUsername, battleMode = 'Blitz') => {
     if (openDirectChallenge) {
@@ -1109,7 +1112,15 @@ export default function Profile() {
                 </div>
               )}
             </div>
-            <span className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-[#81b64c] border-2 border-[#161512] shadow-sm z-10" title="Online now"></span>
+            {/* Real-time Status Indicator Dot (Green if live/online, Gray if offline) */}
+            <span
+              className={`absolute bottom-1 right-1 w-4 h-4 rounded-full border-2 border-[#161512] shadow-sm z-10 transition-colors duration-300 ${
+                isActuallyLive
+                  ? 'bg-[#81b64c] ring-2 ring-[#81b64c]/30'
+                  : 'bg-[#5c5a57]'
+              }`}
+              title={isActuallyLive ? 'Active now' : (user.lastOnline && user.lastOnline !== 'Active now' ? `Last online: ${user.lastOnline}` : 'Offline')}
+            />
           </div>
 
           {/* User Information */}
@@ -1202,7 +1213,14 @@ export default function Profile() {
                 <span className="text-white font-bold">{user.viewsCount ?? 0}</span> Views
               </div>
               <div>
-                Last Online <span className="text-white font-bold">{user.lastOnline || 'Active now'}</span>
+                Last Online{' '}
+                <span className={`font-bold transition-colors ${
+                  isActuallyLive ? 'text-[#81b64c]' : 'text-[#8c8b88]'
+                }`}>
+                  {isActuallyLive
+                    ? 'Active now'
+                    : (user.lastOnline && user.lastOnline !== 'Active now' ? user.lastOnline : 'Offline')}
+                </span>
               </div>
             </div>
           </div>
@@ -2372,14 +2390,19 @@ export default function Profile() {
                               </div>
                             )}
                             {/* Online status indicator */}
-                            <span
-                              title={friend.isOnline ? 'Online Now' : 'Offline'}
-                              className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#1b1917] ${
-                                friend.isOnline
-                                  ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
-                                  : 'bg-[#5c5a57]'
-                              }`}
-                            />
+                            {(() => {
+                              const isFriendLive = isSelf || (typeof isUserOnline === 'function' ? isUserOnline(friend.username) : friend.isOnline);
+                              return (
+                                <span
+                                  title={isFriendLive ? 'Online Now' : 'Offline'}
+                                  className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#1b1917] transition-colors duration-200 ${
+                                    isFriendLive
+                                      ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
+                                      : 'bg-[#5c5a57]'
+                                  }`}
+                                />
+                              );
+                            })()}
                           </div>
 
                           <div className="flex-1 min-w-0">
@@ -2390,15 +2413,18 @@ export default function Profile() {
                               >
                                 {friend.displayName || friend.username}
                               </Link>
-                              {friend.isOnline ? (
-                                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
-                                  Online
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-[#7d7c78] bg-white/5 px-1.5 py-0.5 rounded border border-white/5 whitespace-nowrap">
-                                  Offline
-                                </span>
-                              )}
+                              {(() => {
+                                const isFriendLive = isSelf || (typeof isUserOnline === 'function' ? isUserOnline(friend.username) : friend.isOnline);
+                                return isFriendLive ? (
+                                  <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
+                                    Online
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-[#7d7c78] bg-white/5 px-1.5 py-0.5 rounded border border-white/5 whitespace-nowrap">
+                                    Offline
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="flex items-center gap-1.5 text-xs text-[#8c8b88] mt-0.5">
                               <span className="truncate">@{friend.username}</span>

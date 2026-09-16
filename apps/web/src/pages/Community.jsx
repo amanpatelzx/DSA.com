@@ -7,7 +7,7 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Community() {
   const { user } = useAuth();
-  const { sendChallenge, openDirectChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge, isUserOnline } = useSocket();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -556,14 +556,29 @@ export default function Community() {
                           {/* Player */}
                           <td className="py-3.5 px-4">
                             <div className="flex items-center gap-3 min-w-[180px]">
-                              {/* Avatar (DP) */}
-                              <div className="w-9 h-9 rounded-xl overflow-hidden flex-shrink-0 bg-gradient-to-tr from-[#81b64c] to-emerald-600 border border-white/10 flex items-center justify-center text-white font-black text-sm shadow">
-                                {p.avatar ? (
-                                  <img src={p.avatar} alt={p.username} className="w-full h-full object-cover" />
-                                ) : (
-                                  p.username?.charAt(0).toUpperCase()
-                                )}
-                              </div>
+                              {/* Avatar (DP) with Online / Offline Status Dot */}
+                              {(() => {
+                                const isPlayerOnline = isCurrentUser || (typeof isUserOnline === 'function' ? isUserOnline(p.username) : p.isOnline);
+                                return (
+                                  <div className="relative flex-shrink-0">
+                                    <div className="w-9 h-9 rounded-xl overflow-hidden bg-gradient-to-tr from-[#81b64c] to-emerald-600 border border-white/10 flex items-center justify-center text-white font-black text-sm shadow">
+                                      {p.avatar ? (
+                                        <img src={p.avatar} alt={p.username} className="w-full h-full object-cover" />
+                                      ) : (
+                                        p.username?.charAt(0).toUpperCase()
+                                      )}
+                                    </div>
+                                    <span
+                                      title={isPlayerOnline ? 'Online' : 'Offline'}
+                                      className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#1c1a17] shadow-sm z-10 transition-colors duration-200 ${
+                                        isPlayerOnline
+                                          ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
+                                          : 'bg-[#5c5a57]'
+                                      }`}
+                                    />
+                                  </div>
+                                );
+                              })()}
 
                               {/* Details */}
                               <div className="flex flex-col min-w-0">
@@ -801,14 +816,19 @@ export default function Community() {
                         </div>
                       )}
                       {/* Real-time Online Indicator */}
-                      <span
-                        title={friend.isOnline ? 'Online Now' : 'Offline'}
-                        className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#21201d] ${
-                          friend.isOnline
-                            ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
-                            : 'bg-[#5c5a57]'
-                        }`}
-                      />
+                      {(() => {
+                        const isFriendLive = (typeof isUserOnline === 'function' ? isUserOnline(friend.username) : friend.isOnline);
+                        return (
+                          <span
+                            title={isFriendLive ? 'Online Now' : 'Offline'}
+                            className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#21201d] transition-colors duration-200 ${
+                              isFriendLive
+                                ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
+                                : 'bg-[#5c5a57]'
+                            }`}
+                          />
+                        );
+                      })()}
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -819,15 +839,18 @@ export default function Community() {
                         >
                           {friend.displayName || friend.username}
                         </Link>
-                        {friend.isOnline ? (
-                          <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
-                            Online
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-[#7d7c78] bg-white/5 px-1.5 py-0.5 rounded border border-white/5 whitespace-nowrap">
-                            Offline
-                          </span>
-                        )}
+                        {(() => {
+                          const isFriendLive = (typeof isUserOnline === 'function' ? isUserOnline(friend.username) : friend.isOnline);
+                          return isFriendLive ? (
+                            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 whitespace-nowrap">
+                              Online
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-[#7d7c78] bg-white/5 px-1.5 py-0.5 rounded border border-white/5 whitespace-nowrap">
+                              Offline
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="flex items-center gap-1.5 text-xs text-[#8c8b88] mt-0.5">
                         <span className="truncate">@{friend.username}</span>

@@ -10,6 +10,22 @@ import Submission from '../models/Submission.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { isUserOnline } from '../socket.js';
 
+const formatTimeAgo = (date) => {
+  if (!date) return 'Offline';
+  const diffMs = Date.now() - new Date(date).getTime();
+  if (diffMs < 0 || isNaN(diffMs)) return 'Offline';
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
 const router = express.Router();
 
 // @route   GET /api/users/leaderboard
@@ -43,7 +59,7 @@ router.get('/leaderboard', async (req, res) => {
     }
 
     const users = await User.find(filter)
-      .select('username displayName avatar bio ratings role country countryFlag location organization createdAt')
+      .select('username displayName avatar bio ratings role country countryFlag location organization createdAt lastActive updatedAt')
       .lean();
 
     // Unique accepted problems solved count per user
@@ -105,10 +121,15 @@ router.get('/leaderboard', async (req, res) => {
       }
     });
 
-    const rankedUsers = userList.slice(0, limit).map((u, idx) => ({
-      ...u,
-      rank: idx + 1
-    }));
+    const rankedUsers = userList.slice(0, limit).map((u, idx) => {
+      const online = isUserOnline(u.username);
+      return {
+        ...u,
+        rank: idx + 1,
+        isOnline: online,
+        lastOnline: online ? 'Active now' : formatTimeAgo(u.lastActive || u.updatedAt || u.createdAt)
+      };
+    });
 
     res.json(rankedUsers);
   } catch (error) {
@@ -144,7 +165,7 @@ router.get('/search', async (req, res) => {
     };
 
     const users = await User.find(filter)
-      .select('username displayName ratings avatar role createdAt countryFlag bio streak')
+      .select('username displayName ratings avatar role createdAt countryFlag bio streak lastActive updatedAt')
       .limit(30)
       .lean();
 
@@ -168,10 +189,12 @@ router.get('/search', async (req, res) => {
       const rating = (u.ratings?.blitz || 1500);
       matchScore += Math.min(20, Math.floor(rating / 100));
 
+      const online = isUserOnline(u.username);
       return {
         ...u,
-        isOnline: isUserOnline ? isUserOnline(u.username) : false,
-        matchScore
+        matchScore,
+        isOnline: online,
+        lastOnline: online ? 'Active now' : formatTimeAgo(u.lastActive || u.updatedAt || u.createdAt)
       };
     });
 
@@ -502,7 +525,8 @@ const formatUserProfile = async (user, externalProfiles) => {
       leagueRank: 17,
       friendsCount,
       viewsCount: userObj.profileViews || 0,
-      lastOnline: 'Active now',
+      isOnline: isUserOnline(userObj.username),
+      lastOnline: isUserOnline(userObj.username) ? 'Active now' : formatTimeAgo(userObj.lastActive || userObj.updatedAt || userObj.createdAt),
       joinedDate: userObj.createdAt ? new Date(userObj.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Sep 11, 2026',
       ratings: {
         bullet: userObj.ratings?.bullet || 1500,

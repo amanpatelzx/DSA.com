@@ -6,7 +6,7 @@ import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Search() {
   const navigate = useNavigate();
-  const { sendChallenge, openDirectChallenge } = useSocket();
+  const { sendChallenge, openDirectChallenge, isUserOnline } = useSocket();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
   const [searchTerm, setSearchTerm] = useState(initialQuery);
@@ -161,12 +161,19 @@ export default function Search() {
                       {(u.displayName || u.username).charAt(0).toUpperCase()}
                     </div>
                   )}
-                  {u.isOnline && (
-                    <span
-                      title="Online Now"
-                      className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-[#21201d] animate-pulse"
-                    />
-                  )}
+                  {(() => {
+                    const isCoderOnline = (typeof isUserOnline === 'function' ? isUserOnline(u.username) : u.isOnline);
+                    return (
+                      <span
+                        title={isCoderOnline ? 'Online Now' : 'Offline'}
+                        className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-[#21201d] transition-colors duration-200 ${
+                          isCoderOnline
+                            ? 'bg-emerald-500 ring-2 ring-emerald-500/30'
+                            : 'bg-[#5c5a57]'
+                        }`}
+                      />
+                    );
+                  })()}
                 </div>
 
                 <div className="min-w-0">

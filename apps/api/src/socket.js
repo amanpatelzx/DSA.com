@@ -1,5 +1,6 @@
 import { Server } from 'socket.io';
 import Battle from './models/Battle.js';
+import User from './models/User.js';
 import { selectBattleProblems } from './utils/battleProblemSelector.js';
 
 let io;
@@ -190,9 +191,15 @@ export const initSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
-    // Send immediate platform stats to connecting socket & broadcast real-time count
+    // Send immediate platform stats & online coders list to connecting socket
     getPlatformStats().then(stats => socket.emit('stats:update', stats)).catch(() => {});
+    socket.emit('presence:online_list', getOnlineUsernames());
     broadcastPlatformStats();
+
+    socket.on('presence:get_online', () => {
+      socket.emit('presence:online_list', getOnlineUsernames());
+    });
+
     // 1. Presence registration
     socket.on('presence:online', (userData) => {
       if (!userData) return;
@@ -223,6 +230,9 @@ export const initSocket = (httpServer) => {
         }
         userIdSockets.get(uIdStr).add(socket.id);
       }
+
+      // Keep DB lastActive timestamp up-to-date
+      User.updateOne({ username: usernameClean }, { $set: { lastActive: new Date() } }).catch(() => {});
 
       io.emit('presence:update', { userId, username: usernameRaw, status: 'ONLINE' });
       broadcastPlatformStats();
@@ -889,6 +899,7 @@ export const initSocket = (httpServer) => {
           if (userSockets.get(usernameClean).size === 0) {
             userSockets.delete(usernameClean);
             io.emit('presence:update', { userId: userObj.userId, username: userObj.username, status: 'OFFLINE' });
+            User.updateOne({ username: usernameClean }, { $set: { lastActive: new Date() } }).catch(() => {});
           }
         }
         if (userObj.userId) {

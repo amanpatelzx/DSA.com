@@ -87,6 +87,10 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  lastActive: {
+    type: Date,
+    default: Date.now
+  },
   socialLinks: {
     github: { type: String, default: '' },
     linkedin: { type: String, default: '' },

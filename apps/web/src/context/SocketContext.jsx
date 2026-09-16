@@ -13,6 +13,7 @@ export function SocketProvider({ children }) {
 
   const socketRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [onlineUsernames, setOnlineUsernames] = useState(new Set());
 
   // Challenge States
   const [incomingChallenge, setIncomingChallenge] = useState(null);
@@ -161,6 +162,27 @@ export function SocketProvider({ children }) {
       setOpenChallenges(challenges || []);
     });
 
+    // 8. Real-time online presence roster
+    socket.on('presence:online_list', (list) => {
+      if (Array.isArray(list)) {
+        setOnlineUsernames(new Set(list.map(u => String(u).toLowerCase().trim())));
+      }
+    });
+
+    socket.on('presence:update', (data) => {
+      if (!data?.username) return;
+      const u = String(data.username).toLowerCase().trim();
+      setOnlineUsernames((prev) => {
+        const next = new Set(prev);
+        if (data.status === 'ONLINE') {
+          next.add(u);
+        } else if (data.status === 'OFFLINE') {
+          next.delete(u);
+        }
+        return next;
+      });
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -202,6 +224,16 @@ export function SocketProvider({ children }) {
 
     return () => clearInterval(incomingTimerRef.current);
   }, [incomingChallenge]);
+
+  // Real-time helper to check if a specific user is currently active/online
+  const isUserOnline = useCallback((targetUsername) => {
+    if (!targetUsername) return false;
+    const clean = String(targetUsername).toLowerCase().trim();
+    if (user?.username && user.username.toLowerCase().trim() === clean && isConnected) {
+      return true;
+    }
+    return onlineUsernames.has(clean);
+  }, [user, isConnected, onlineUsernames]);
 
   // Open Challenges Lobby State
   const [openChallenges, setOpenChallenges] = useState([]);
@@ -297,6 +329,8 @@ export function SocketProvider({ children }) {
       value={{
         socket: socketRef.current,
         isConnected,
+        onlineUsernames,
+        isUserOnline,
         sendChallenge,
         acceptChallenge,
         declineChallenge,

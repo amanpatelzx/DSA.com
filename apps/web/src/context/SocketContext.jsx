@@ -8,8 +8,13 @@ import ChallengeConfigModal from '../components/ChallengeConfigModal';
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
-  const { user, isLoggedIn } = useAuth();
+  const { user, isLoggedIn, refreshUser } = useAuth();
   const navigate = useNavigate();
+
+  const userRef = useRef(user);
+  userRef.current = user;
+  const refreshUserRef = useRef(refreshUser);
+  refreshUserRef.current = refreshUser;
 
   const socketRef = useRef(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -183,7 +188,26 @@ export function SocketProvider({ children }) {
       });
     });
 
+    // 9. Real-time user profile & streak updates
+    const onUserUpdate = (data) => {
+      const currentUser = userRef.current;
+      if (!currentUser || !data) return;
+      const activeId = currentUser._id || currentUser.id;
+      const activeName = currentUser.username?.toLowerCase();
+      if ((activeId && data.userId && String(activeId) === String(data.userId)) ||
+          (activeName && data.username && activeName === data.username.toLowerCase())) {
+        if (typeof refreshUserRef.current === 'function') {
+          refreshUserRef.current();
+        }
+      }
+    };
+
+    socket.on('user:profile_update', onUserUpdate);
+    socket.on('user:streak_update', onUserUpdate);
+
     return () => {
+      socket.off('user:profile_update', onUserUpdate);
+      socket.off('user:streak_update', onUserUpdate);
       socket.disconnect();
     };
   }, [navigate]);

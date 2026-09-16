@@ -135,6 +135,23 @@ router.post('/record', protect, async (req, res) => {
       await user.save();
     }
 
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('user:profile_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: user.streak,
+          ratings: user.ratings
+        });
+        io.emit('user:streak_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: user.streak
+        });
+      }
+    } catch {}
+
     // Default computer / bot opponents if none provided
     const defaultOpponents = [
       { name: 'BOT', flag: '🤖', rating: 1510 },
@@ -442,12 +459,30 @@ router.post('/resign', protect, async (req, res) => {
 
     const newRating = isRatedMatch ? Math.max(100, currentRating + ratingChange) : currentRating;
 
-    user.streak = 0;
+    // Match loss does not reset daily problem solving streak
+    const currentStreak = user.streak || 1;
     if (isRatedMatch) {
       if (!user.ratings) user.ratings = {};
       user.ratings[ratingKey] = newRating;
     }
     await user.save();
+
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('user:profile_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: currentStreak,
+          ratings: user.ratings
+        });
+        io.emit('user:streak_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: currentStreak
+        });
+      }
+    } catch {}
 
     // If opponent is a real user in the system, award them +16
     const realOpponent = isRatedMatch ? await findRealOpponent(opponentName, user._id) : null;

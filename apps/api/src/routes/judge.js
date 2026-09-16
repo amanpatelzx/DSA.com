@@ -7,7 +7,7 @@ import Battle from '../models/Battle.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 import jwt from 'jsonwebtoken';
-import { isBattleConcluded, markBattleConcluded, concludedBattles } from '../socket.js';
+import { isBattleConcluded, markBattleConcluded, concludedBattles, getIO } from '../socket.js';
 
 const router = express.Router();
 
@@ -205,7 +205,8 @@ router.post('/submit', async (req, res) => {
       isRatedMatch = !isExplicitNonRated && !isBotOpponent && !battleAlreadyFinished;
 
       if (result.status === 'Accepted') {
-        user.streak = (user.streak || 1) + 1;
+        user.streak = (user.streak || 0) + 1;
+        user.lastActive = new Date();
 
         if (isRatedMatch) {
           ratingChange = 16;
@@ -258,6 +259,28 @@ router.post('/submit', async (req, res) => {
         }
 
         await user.save();
+
+        // Broadcast real-time profile and streak update to sockets
+        try {
+          const io = getIO();
+          if (io) {
+            const solvedTotal = await Submission.countDocuments({ userId: user._id, status: 'ACCEPTED' });
+            io.emit('user:profile_update', {
+              userId: user._id.toString(),
+              username: user.username,
+              streak: user.streak,
+              ratings: user.ratings,
+              solvedCount: solvedTotal
+            });
+            io.emit('user:streak_update', {
+              userId: user._id.toString(),
+              username: user.username,
+              streak: user.streak
+            });
+          }
+        } catch (socketErr) {
+          console.warn('Realtime streak socket broadcast error:', socketErr.message);
+        }
       }
 
       // Record Battle document ONLY if in an active unconcluded match context

@@ -309,6 +309,80 @@ const formatUserProfile = async (user, externalProfiles) => {
     status: 'COMPLETED'
   }).sort({ createdAt: -1 }).limit(30);
 
+  // Dynamic Real-time Daily Streak Calculation from all actual accepted submissions, completed battles, and active sessions
+  const activityDates = new Set();
+  const registerActivityDate = (rawDate) => {
+    if (!rawDate) return;
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return;
+      // UTC calendar date string
+      activityDates.add(d.toISOString().split('T')[0]);
+      // Local server calendar date string
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      activityDates.add(`${y}-${m}-${day}`);
+    } catch {}
+  };
+
+  userSubmissions.forEach(sub => {
+    if ((sub.status || '').toUpperCase() === 'ACCEPTED' && sub.createdAt) {
+      registerActivityDate(sub.createdAt);
+    }
+  });
+
+  realBattles.forEach(b => {
+    if (b.createdAt) {
+      registerActivityDate(b.createdAt);
+    }
+  });
+
+  if (user.lastActive) {
+    registerActivityDate(user.lastActive);
+  }
+
+  const hasActivityOnDate = (dateObj) => {
+    try {
+      const utc = dateObj.toISOString().split('T')[0];
+      const y = dateObj.getFullYear();
+      const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const day = String(dateObj.getDate()).padStart(2, '0');
+      const local = `${y}-${m}-${day}`;
+      return activityDates.has(utc) || activityDates.has(local);
+    } catch {
+      return false;
+    }
+  };
+
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 86400000);
+
+  let dynamicDailyStreak = 0;
+  if (hasActivityOnDate(now) || hasActivityOnDate(yesterday)) {
+    let checkDate = hasActivityOnDate(now) ? new Date(now) : new Date(yesterday);
+    while (true) {
+      if (hasActivityOnDate(checkDate)) {
+        dynamicDailyStreak++;
+        checkDate = new Date(checkDate.getTime() - 86400000);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Effective streak is the maximum of dynamic consecutive days, stored DB streak, or at least 1 if user has solved any problem
+  const effectiveStreak = Math.max(
+    dynamicDailyStreak,
+    userObj.streak || 0,
+    (solvedProblemMap.size > 0 ? 1 : 0)
+  );
+
+  // Sync to database if DB value is outdated
+  if (user.streak !== effectiveStreak) {
+    User.updateOne({ _id: user._id }, { $set: { streak: effectiveStreak } }).catch(() => {});
+  }
+
   const matchHistory = realBattles.map(b => {
     const userPlayer = (b.players && b.players.find(p => p.userId && p.userId.toString() === user._id.toString())) || (b.players && b.players[0]) || {};
     const isWin = b.winnerId && b.winnerId.toString() === user._id.toString();
@@ -520,7 +594,7 @@ const formatUserProfile = async (user, externalProfiles) => {
       countryFlag: userObj.countryFlag || '',
       location: userObj.location || '',
       organization: userObj.organization || '',
-      streak: userObj.streak || 1,
+      streak: effectiveStreak,
       league,
       leagueRank: 17,
       friendsCount,

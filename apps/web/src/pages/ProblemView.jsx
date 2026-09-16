@@ -2553,6 +2553,10 @@ export default function ProblemView() {
           const nextSolved = new Set([...solvedProblemSlugs, activeSlug]);
           setSolvedProblemSlugs(nextSolved);
 
+          if (typeof refreshUser === 'function') {
+            refreshUser();
+          }
+
           // In normal practice mode or continuation mode: stop timer and record solve time
           if (!isChallenge || isConcluded) {
             setIsPracticeTimerRunning(false);

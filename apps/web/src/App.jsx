@@ -1153,15 +1153,6 @@ export default function App() {
                     </span>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowTimeControlModal(true)}
-                  className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl transition shadow flex items-center gap-1.5 cursor-pointer shrink-0 group transform hover:-translate-y-0.5 active:translate-y-0"
-                >
-                  <span className="text-sm font-bold group-hover:rotate-90 transition-transform duration-200">+</span>
-                  <span>Post Challenge</span>
-                </button>
               </div>
             </div>
 
@@ -1317,24 +1308,26 @@ export default function App() {
                         </div>
                       );
                     })}
+                    <div className="pt-2 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setShowTimeControlModal(true)}
+                        className="bg-[#81b64c] hover:bg-[#92c55b] text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition shadow-lg cursor-pointer flex items-center gap-2"
+                      >
+                        <span>⚡ Create Global Challenge</span>
+                        <span>→</span>
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
 
               {/* Footer Info / Auto-Match Explanation */}
-              <div className="pt-3 mt-3 border-t border-white/5 flex items-center justify-between text-[11px] text-[#8c8b88] flex-wrap gap-2">
+              <div className="pt-3 mt-3 border-t border-white/5 flex items-center text-[11px] text-[#8c8b88]">
                 <span className="flex items-center gap-1.5">
                   <span>💡</span>
                   <span><strong>Theme Match:</strong> If anyone challenges with the same theme (e.g. Bullet 10 min), the duel starts automatically!</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setShowTimeControlModal(true)}
-                  className="text-[#81b64c] hover:text-[#92c55b] transition font-bold cursor-pointer shrink-0 ml-auto flex items-center gap-1"
-                >
-                  <span>+ Create Challenge</span>
-                  <span>→</span>
-                </button>
               </div>
             </div>
             </div>

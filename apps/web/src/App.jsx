@@ -1494,7 +1494,7 @@ export default function App() {
               className="flex items-center gap-2 hover:text-white transition group py-1.5 px-3 rounded-lg hover:bg-white/5 cursor-pointer"
             >
               <span className="text-base group-hover:scale-110 transition">📁</span>
-              <span>Game History</span>
+              <span>Battle History</span>
             </button>
 
             <span className="text-white/10">|</span>

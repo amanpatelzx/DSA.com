@@ -930,8 +930,44 @@ export const initSocket = (httpServer) => {
     });
 
     // 5. Live Battle Registry for homepage spectator
-    socket.on('battle:live_register', (data) => {
+    socket.on('battle:live_register', async (data) => {
       if (!data || !data.battleId) return;
+      const bId = String(data.battleId);
+
+      // If battle already concluded, notify socket immediately and do not register as live
+      if (isBattleConcluded(bId)) {
+        const info = concludedBattles.get(bId);
+        socket.emit('battle:already_concluded', {
+          battleId: bId,
+          winnerUsername: info?.winnerUsername || 'Opponent'
+        });
+        return;
+      }
+
+      try {
+        const existingBattle = await Battle.findOne({
+          battleId: bId,
+          status: { $in: ['COMPLETED', 'RESIGNED', 'ABANDONED', 'CANCELLED'] }
+        });
+        if (existingBattle) {
+          let winName = existingBattle.winnerUsername || '';
+          if (!winName && existingBattle.winnerId) {
+            const winUser = await User.findById(existingBattle.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existingBattle.opponentName || 'Opponent';
+          markBattleConcluded(bId, {
+            winnerUsername: winName,
+            winnerId: existingBattle.winnerId,
+            reason: 'db_completed'
+          });
+          socket.emit('battle:already_concluded', {
+            battleId: bId,
+            winnerUsername: winName
+          });
+          return;
+        }
+      } catch (err) {}
 
       const pRating = data.user?.rating || 1500;
       const oRating = data.opponent?.rating || 1500;

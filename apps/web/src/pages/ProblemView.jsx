@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link, Navigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
@@ -834,7 +834,14 @@ export default function ProblemView() {
     if (queryBattleId) {
       try {
         const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
-        if (completed.includes(queryBattleId)) {
+        if (
+          completed.includes(queryBattleId) ||
+          localStorage.getItem(`dsa_battle_concluded_${queryBattleId}`) === 'true' ||
+          localStorage.getItem(`dsa_battle_won_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_lost_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_winner_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_loser_${queryBattleId}`)
+        ) {
           return {
             battleId: queryBattleId,
             initialTime: 0,
@@ -943,6 +950,20 @@ export default function ProblemView() {
       return false;
     }
   })();
+  const initialIsConcluded = (() => {
+    try {
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      return Boolean(
+        completed.includes(currentBattleId) ||
+        localStorage.getItem(`dsa_battle_concluded_${currentBattleId}`) === 'true' ||
+        initialHasWon ||
+        initialHasLost ||
+        initialBattleSessionRef.current?.isConcluded
+      );
+    } catch {
+      return false;
+    }
+  })();
 
   const hasWonRef = useRef(Boolean(initialHasWon));
   const hasLostRef = useRef(Boolean(initialHasLost));
@@ -960,28 +981,60 @@ export default function ProblemView() {
       try {
         localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
         localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
       } catch {}
     } else if (matchResult?.status === 'loss') {
       hasLostRef.current = true;
       try {
         localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
         localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
       } catch {}
     }
   }, [matchResult, activeUsername]);
 
+  // If match is already over locally or in storage, redirect immediately to profile
   useEffect(() => {
-    if (initialBattleSessionRef.current?.isConcluded || initialHasWon || initialHasLost) {
-      setIsContinuationMode(true);
-      setIsBattleConcluded(true);
-      isBattleConcludedRef.current = true;
-      setTimerActive(false);
-      setTimeLeft(0);
-      try {
-        window.history.replaceState({}, '', `/problem/${activeSlug}`);
-      } catch {}
-    }
-  }, [activeSlug, initialHasWon, initialHasLost]);
+    if (!isChallenge) return;
+    const bId = searchParams.get('battleId') || battleIdRef.current;
+    if (!bId) return;
+
+    try {
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      if (
+        completed.includes(bId) ||
+        localStorage.getItem(`dsa_battle_concluded_${bId}`) === 'true' ||
+        localStorage.getItem(`dsa_battle_won_${bId}`) ||
+        localStorage.getItem(`dsa_battle_lost_${bId}`) ||
+        initialHasWon ||
+        initialHasLost ||
+        initialIsConcluded ||
+        initialBattleSessionRef.current?.isConcluded
+      ) {
+        clearBattleSession(true);
+        navigate('/profile', { replace: true });
+        return;
+      }
+    } catch {}
+
+    // Check server if match was concluded in DB / socket registry
+    axios.get(`${API_BASE_URL}/api/battles/${bId}/status`)
+      .then((res) => {
+        if (res.data?.isConcluded) {
+          try {
+            const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+            if (!completed.includes(bId)) {
+              completed.push(bId);
+              localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+            }
+            localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+          } catch {}
+          clearBattleSession(true);
+          navigate('/profile', { replace: true });
+        }
+      })
+      .catch(() => {});
+  }, [isChallenge, navigate, initialHasWon, initialHasLost, initialIsConcluded, searchParams]);
 
   useEffect(() => {
     timeLeftRef.current = timeLeft;
@@ -1049,7 +1102,6 @@ export default function ProblemView() {
         setIsBattleConcluded(true);
         isBattleConcludedRef.current = true;
         setTimerActive(false);
-        setIsContinuationMode(true);
         clearBattleSession(true);
         try {
           const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
@@ -1057,8 +1109,9 @@ export default function ProblemView() {
             completed.push(battleIdRef.current);
             localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
           }
-          window.history.replaceState({}, '', `/problem/${activeSlug}`);
+          localStorage.setItem(`dsa_battle_concluded_${battleIdRef.current}`, 'true');
         } catch {}
+        navigate('/profile', { replace: true });
       });
 
       socket.on('battle:peer_won', ({ winnerUsername, finalCode, language: oppLang }) => {
@@ -1106,6 +1159,7 @@ export default function ProblemView() {
           try {
             localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
             localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+            localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
             const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
             if (!completed.includes(bId)) {
               completed.push(bId);
@@ -1150,6 +1204,9 @@ export default function ProblemView() {
             completed.push(battleIdRef.current);
             localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
           }
+          localStorage.setItem(`dsa_battle_concluded_${battleIdRef.current}`, 'true');
+          localStorage.setItem(`dsa_battle_won_${battleIdRef.current}`, activeUsername);
+          localStorage.setItem(`dsa_battle_winner_${battleIdRef.current}`, activeUsername);
         } catch {}
         if (window.__DSA_ACTIVE_BATTLE__) {
           window.__DSA_ACTIVE_BATTLE__.isRunning = false;
@@ -1260,6 +1317,16 @@ export default function ProblemView() {
 
     clearBattleSession(true);
 
+    try {
+      const bId = battleIdRef.current;
+      localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      if (!completed.includes(bId)) {
+        completed.push(bId);
+        localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+      }
+    } catch {}
+
     const activeToken = localStorage.getItem('token') || token;
     let newRating = userModeRating;
     let ratingChange = 0;
@@ -1271,7 +1338,7 @@ export default function ProblemView() {
       if (activeToken) {
         try {
           await axios.post(
-            'http://localhost:5000/api/battles/record',
+            `${API_BASE_URL}/api/battles/record`,
             {
               battleId: battleIdRef.current,
               mode,
@@ -1624,7 +1691,7 @@ export default function ProblemView() {
       if (activeToken) {
         try {
           await axios.post(
-            'http://localhost:5000/api/battles/resign',
+            `${API_BASE_URL}/api/battles/resign`,
             {
               battleId: battleIdRef.current,
               mode,
@@ -1644,6 +1711,17 @@ export default function ProblemView() {
 
       // Clean up battle storage and guards
       clearBattleSession();
+      try {
+        const bId = battleIdRef.current;
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+        localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+        const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+        if (!completed.includes(bId)) {
+          completed.push(bId);
+          localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+        }
+      } catch {}
       isBattleRunningRef.current = false;
       if (window.__DSA_ACTIVE_BATTLE__) {
         window.__DSA_ACTIVE_BATTLE__.isRunning = false;
@@ -1744,7 +1822,7 @@ export default function ProblemView() {
         localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
         localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
       }
-      window.history.replaceState({}, '', `/problem/${activeSlug}`);
+      navigate(`/problem/${activeSlug}`, { replace: true });
     } catch {}
   };
 
@@ -2540,6 +2618,7 @@ export default function ProblemView() {
               try {
                 localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
                 localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+                localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
                 const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
                 if (!completed.includes(bId)) {
                   completed.push(bId);
@@ -2644,6 +2723,11 @@ export default function ProblemView() {
       setIsRunning(false);
     }
   };
+
+  if (isChallenge && (initialIsConcluded || isBattleConcluded) && !matchResult && !showOpponentResignedModal) {
+    clearBattleSession(true);
+    return <Navigate to="/profile" replace />;
+  }
 
   if (!problem) return (
     <div className="flex items-center justify-center min-h-[60vh] gap-3 text-white/60">
@@ -3896,9 +3980,12 @@ export default function ProblemView() {
           <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative animate-in zoom-in duration-200">
             <button
               type="button"
-              onClick={handleContinueSolving}
+              onClick={() => {
+                clearBattleSession(true);
+                navigate('/profile');
+              }}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center text-sm font-bold transition cursor-pointer"
-              title="Close and continue in normal editor"
+              title="Close and return to profile"
             >
               ✕
             </button>

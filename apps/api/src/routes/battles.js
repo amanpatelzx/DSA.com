@@ -767,5 +767,54 @@ router.post('/report', protect, async (req, res) => {
   }
 });
 
+// @route   GET /api/battles/:battleId/status
+// @desc    Check whether a battle has completed, resigned, or concluded
+// @access  Public
+router.get('/:battleId/status', async (req, res) => {
+  try {
+    const { battleId } = req.params;
+    if (!battleId) {
+      return res.json({ isConcluded: false });
+    }
+
+    const bId = String(battleId);
+    const isMemConcluded = isBattleConcluded(bId);
+    let winName = isMemConcluded ? concludedBattles.get(bId)?.winnerUsername : '';
+
+    const existingBattle = await Battle.findOne({
+      battleId: bId,
+      status: { $in: ['COMPLETED', 'RESIGNED', 'ABANDONED', 'CANCELLED'] }
+    });
+
+    if (existingBattle) {
+      if (!winName) {
+        winName = existingBattle.winnerUsername || '';
+        if (!winName && existingBattle.winnerId) {
+          const winUser = await User.findById(existingBattle.winnerId).select('username');
+          if (winUser) winName = winUser.username;
+        }
+        if (!winName) winName = existingBattle.opponentName || 'Opponent';
+      }
+      return res.json({
+        isConcluded: true,
+        status: existingBattle.status,
+        winnerUsername: winName
+      });
+    }
+
+    if (isMemConcluded) {
+      return res.json({
+        isConcluded: true,
+        status: 'COMPLETED',
+        winnerUsername: winName || 'Opponent'
+      });
+    }
+
+    res.json({ isConcluded: false });
+  } catch (err) {
+    res.json({ isConcluded: false });
+  }
+});
+
 export default router;
 

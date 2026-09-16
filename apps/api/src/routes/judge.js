@@ -7,6 +7,7 @@ import Battle from '../models/Battle.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 import jwt from 'jsonwebtoken';
+import { isBattleConcluded, markBattleConcluded, concludedBattles } from '../socket.js';
 
 const router = express.Router();
 
@@ -60,7 +61,17 @@ router.post('/run', async (req, res) => {
 // @access  Public / Authenticated
 router.post('/submit', async (req, res) => {
   try {
-    const { language, code, slug, battleId, mode, opponentName, opponentId } = req.body;
+    const {
+      language,
+      code,
+      slug,
+      battleId,
+      mode,
+      opponentName,
+      opponentId,
+      isContinuation,
+      isBattleConcluded: clientConcluded
+    } = req.body;
 
     if (!code) {
       return res.status(400).json({ message: 'Code is required' });
@@ -149,15 +160,49 @@ router.post('/submit', async (req, res) => {
       const ratingKey = (mode || 'blitz').toLowerCase();
       newRating = (user.ratings && user.ratings[ratingKey]) || 1500;
 
-      // Rating only changes when match is rated and NOT against an explicit bot
+      // Check if battle is already finished or concluded
+      let battleAlreadyFinished = Boolean(
+        isContinuation ||
+        clientConcluded ||
+        (battleId && isBattleConcluded(battleId))
+      );
+
+      let existingBattleWinnerUsername = null;
+      if (!battleAlreadyFinished && battleId) {
+        try {
+          const existingBattle = await Battle.findOne({
+            battleId,
+            status: { $in: ['COMPLETED', 'RESIGNED'] }
+          });
+          if (existingBattle) {
+            battleAlreadyFinished = true;
+            let winName = existingBattle.winnerUsername || '';
+            if (!winName && existingBattle.winnerId) {
+              const winUser = await User.findById(existingBattle.winnerId).select('username');
+              if (winUser) winName = winUser.username;
+            }
+            if (!winName) {
+              winName = existingBattle.opponentName || 'Opponent';
+            }
+            existingBattleWinnerUsername = winName;
+            markBattleConcluded(battleId, {
+              winnerUsername: winName,
+              winnerId: existingBattle.winnerId,
+              reason: 'already_completed'
+            });
+          }
+        } catch {}
+      }
+
+      // Rating only changes when match is rated, NOT against an explicit bot, and NOT already concluded!
       const isExplicitNonRated = req.body.isRated === false || req.body.isRated === 'false' || req.body.isRated === 0 || req.body.isRated === '0';
       const isBotOpponent = opponentName && (
         String(opponentName).toLowerCase().includes('bot') ||
         String(opponentName).toLowerCase().includes('stockfish') ||
         String(opponentName).toLowerCase().includes('computer')
       );
-      const realOpponent = (!isExplicitNonRated && !isBotOpponent) ? await findRealOpponent(opponentId || opponentName, user._id) : null;
-      isRatedMatch = !isExplicitNonRated && !isBotOpponent;
+      const realOpponent = (!isExplicitNonRated && !isBotOpponent && !battleAlreadyFinished) ? await findRealOpponent(opponentId || opponentName, user._id) : null;
+      isRatedMatch = !isExplicitNonRated && !isBotOpponent && !battleAlreadyFinished;
 
       if (result.status === 'Accepted') {
         user.streak = (user.streak || 1) + 1;
@@ -199,17 +244,27 @@ router.post('/submit', async (req, res) => {
             } catch {}
           }
         } else {
-          // Bot or Solo Training: UNRATED / NON-RATED (No rating increase or decrease!)
+          // Bot, Solo Training, or Post-Battle Practice / Already Concluded: UNRATED (No rating increase or decrease!)
           ratingChange = 0;
+        }
+
+        // CRITICAL: Mark this battle as concluded in socket registry for ALL match formats (rated and unrated)
+        if (battleId && !battleAlreadyFinished) {
+          markBattleConcluded(battleId, {
+            winnerUsername: user.username,
+            winnerId: user._id,
+            reason: 'win'
+          });
         }
 
         await user.save();
       }
 
-      // Record Battle document if in a match context
-      if (isRatedMatch || opponentName) {
+      // Record Battle document ONLY if in an active unconcluded match context
+      if (!battleAlreadyFinished && (isRatedMatch || opponentName)) {
         try {
           await Battle.create({
+            battleId: battleId || `battle_${Date.now()}`,
             mode: mode || 'Blitz',
             timeControlStr: req.body.timeControl || '3 min',
             problemTitle: problem ? problem.title : 'Two Sum',
@@ -231,6 +286,7 @@ router.post('/submit', async (req, res) => {
               }
             ],
             winnerId: result.status === 'Accepted' ? user._id : null,
+            winnerUsername: result.status === 'Accepted' ? user.username : '',
             isDraw: false
           });
         } catch (bErr) {
@@ -245,7 +301,9 @@ router.post('/submit', async (req, res) => {
       isRated: isRatedMatch,
       newRating,
       ratingChange,
-      streak: user ? user.streak : 1
+      streak: user ? user.streak : 1,
+      battleAlreadyFinished: Boolean(battleAlreadyFinished),
+      winnerUsername: existingBattleWinnerUsername || (battleId && isBattleConcluded(battleId) ? concludedBattles.get(String(battleId))?.winnerUsername : null)
     });
   } catch (error) {
     console.error('Judge submit error:', error);

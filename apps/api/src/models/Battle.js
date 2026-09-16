@@ -40,6 +40,7 @@ const battleSchema = new mongoose.Schema({
   serverEndTime: { type: Date, default: Date.now },
   
   winnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Null if draw
+  winnerUsername: { type: String, default: '' },
   isDraw: { type: Boolean, default: false }
 
 }, { timestamps: true });

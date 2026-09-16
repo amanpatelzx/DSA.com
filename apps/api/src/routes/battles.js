@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { protect } from '../middleware/authMiddleware.js';
 import BattleReport from '../models/BattleReport.js';
-import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage, getIO } from '../socket.js';
+import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage, getIO, isBattleConcluded, markBattleConcluded, concludedBattles } from '../socket.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 import { getBotSolution } from '../utils/botSolutions.js';
 
@@ -32,6 +32,42 @@ router.post('/record', protect, async (req, res) => {
 
     const ratingKey = mode.toLowerCase();
     const currentRating = (user.ratings && user.ratings[ratingKey]) || 1500;
+
+    const battleId = req.body.battleId;
+    let battleAlreadyConcluded = Boolean(battleId && isBattleConcluded(battleId));
+
+    if (!battleAlreadyConcluded && battleId) {
+      try {
+        const existing = await Battle.findOne({
+          battleId,
+          status: { $in: ['COMPLETED', 'RESIGNED'] }
+        });
+        if (existing) {
+          battleAlreadyConcluded = true;
+          let winName = existing.winnerUsername || '';
+          if (!winName && existing.winnerId) {
+            const winUser = await User.findById(existing.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existing.opponentName || 'Opponent';
+          markBattleConcluded(battleId, {
+            winnerUsername: winName,
+            winnerId: existing.winnerId,
+            reason: 'already_completed'
+          });
+        }
+      } catch {}
+    }
+
+    if (battleAlreadyConcluded) {
+      return res.json({
+        message: 'Match already concluded',
+        battleId,
+        alreadyConcluded: true,
+        userRating: currentRating,
+        isRated: false
+      });
+    }
 
     // Check whether the match is rated and not against an explicit bot
     const isExplicitNonRated = req.body.isRated === false || req.body.isRated === 'false' || req.body.isRated === 0 || req.body.isRated === '0';
@@ -149,6 +185,11 @@ router.post('/record', protect, async (req, res) => {
     });
 
     if (req.body.battleId) {
+      markBattleConcluded(req.body.battleId, {
+        winnerUsername: result === 'win' ? user.username : finalOpponentName,
+        winnerId: result === 'win' ? user._id : (realOpponent ? realOpponent._id : null),
+        reason: result
+      });
       if (!battleCodeStorage.has(req.body.battleId)) {
         battleCodeStorage.set(req.body.battleId, new Map());
       }
@@ -471,6 +512,10 @@ router.post('/resign', protect, async (req, res) => {
     }
 
     if (req.body.battleId) {
+      markBattleConcluded(req.body.battleId, {
+        winnerUsername: opponentName || 'Opponent',
+        reason: 'resigned'
+      });
       if (liveBattles.has(req.body.battleId)) {
         liveBattles.delete(req.body.battleId);
       }
@@ -502,6 +547,51 @@ router.post('/resign', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error during battle resignation' });
   }
 });
+
+// @route   GET /api/battles/:battleId/status
+// @desc    Check whether a battle has concluded and who won
+// @access  Public
+router.get('/:battleId/status', async (req, res) => {
+  try {
+    const { battleId } = req.params;
+    if (!battleId) {
+      return res.status(400).json({ message: 'battleId is required' });
+    }
+
+    if (isBattleConcluded(battleId)) {
+      const mem = concludedBattles.get(String(battleId));
+      return res.json({
+        isConcluded: true,
+        winnerUsername: mem?.winnerUsername || 'Opponent',
+        reason: mem?.reason || 'completed'
+      });
+    }
+
+    const battle = await Battle.findOne({
+      battleId,
+      status: { $in: ['COMPLETED', 'RESIGNED'] }
+    });
+
+    if (battle) {
+      markBattleConcluded(battleId, {
+        winnerUsername: battle.opponentName,
+        winnerId: battle.winnerId,
+        reason: battle.status
+      });
+      return res.json({
+        isConcluded: true,
+        winnerUsername: battle.opponentName,
+        status: battle.status
+      });
+    }
+
+    res.json({ isConcluded: false });
+  } catch (err) {
+    console.warn('Error checking battle status:', err.message);
+    res.status(500).json({ message: 'Error checking battle status' });
+  }
+});
+
 // @route   GET /api/battles/:battleId/code
 // @desc    Retrieve both players' code from a finished or active battle
 // @access  Public

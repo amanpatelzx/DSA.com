@@ -600,9 +600,18 @@ router.put('/:id', protect, admin, async (req, res) => {
     problem.followUp = req.body.followUp !== undefined ? req.body.followUp : problem.followUp;
     problem.inputFormat = inputFormat || problem.inputFormat;
     problem.outputFormat = outputFormat || problem.outputFormat;
-    problem.examples = examples || problem.examples;
-    problem.visibleTestCases = visibleTestCases || problem.visibleTestCases;
-    problem.hiddenTestCases = hiddenTestCases || problem.hiddenTestCases;
+    if (examples !== undefined) {
+      problem.examples = examples;
+      problem.markModified('examples');
+    }
+    if (visibleTestCases !== undefined) {
+      problem.visibleTestCases = visibleTestCases;
+      problem.markModified('visibleTestCases');
+    }
+    if (hiddenTestCases !== undefined) {
+      problem.hiddenTestCases = hiddenTestCases;
+      problem.markModified('hiddenTestCases');
+    }
     problem.supportedLanguages = supportedLanguages || problem.supportedLanguages;
     problem.timeLimit = timeLimit || problem.timeLimit;
     problem.memoryLimit = memoryLimit || problem.memoryLimit;

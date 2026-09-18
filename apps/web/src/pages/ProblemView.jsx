@@ -389,8 +389,8 @@ export default function ProblemView() {
   const [cheatingReportSuccess, setCheatingReportSuccess] = useState('');
   const [cheatingReportError, setCheatingReportError] = useState('');
 
-  // Practice Continuation Mode (upon loss or timeout)
-  const [isContinuationMode, setIsContinuationMode] = useState(false);
+  // Practice Continuation Mode (upon draw, loss, or timeout)
+  const [isContinuationMode, setIsContinuationMode] = useState(() => searchParams.get('continuation') === 'true');
 
   // Tournament Registration & Lifecycle State
   const [tournamentData, setTournamentData] = useState(null);
@@ -1098,7 +1098,8 @@ export default function ProblemView() {
         }
       });
 
-      socket.on('battle:already_concluded', ({ winnerUsername }) => {
+      socket.on('battle:already_concluded', ({ winnerUsername, reason, isDraw }) => {
+        if (isContinuationMode) return;
         setIsBattleConcluded(true);
         isBattleConcludedRef.current = true;
         setTimerActive(false);
@@ -1111,7 +1112,20 @@ export default function ProblemView() {
           }
           localStorage.setItem(`dsa_battle_concluded_${battleIdRef.current}`, 'true');
         } catch {}
-        navigate('/profile', { replace: true });
+        if (isDraw || reason === 'draw' || reason === 'time_expired' || winnerUsername === 'Draw') {
+          if (handleTimeExpiredRef.current) {
+            handleTimeExpiredRef.current({ isDraw: true });
+          }
+        } else {
+          navigate('/profile', { replace: true });
+        }
+      });
+
+      socket.on('battle:draw', ({ reason }) => {
+        if (hasWonRef.current || hasLostRef.current) return;
+        if (handleTimeExpiredRef.current) {
+          handleTimeExpiredRef.current({ isDraw: true });
+        }
       });
 
       socket.on('battle:peer_won', ({ winnerUsername, finalCode, language: oppLang }) => {
@@ -1181,6 +1195,12 @@ export default function ProblemView() {
             winnerName: winnerUsername
           });
           fetchOpponentBattleCode(bId);
+
+          // Auto-redirect loser to profile after 5 seconds so they can see the Defeat modal
+          setTimeout(() => {
+            clearBattleSession(true);
+            navigate('/profile', { replace: true });
+          }, 5000);
         }
       });
 
@@ -1216,6 +1236,68 @@ export default function ProblemView() {
         if (refreshUser) {
           refreshUser();
         }
+      });
+
+      // FORCE STOP: Server-emitted event when the opponent's submission was accepted first.
+      // This immediately ends the battle for the losing player, even if battle:peer_won hasn't arrived yet.
+      socket.on('battle:force_stop', ({ battleId: stoppedBattleId, winnerUsername, winnerId }) => {
+        const bId = battleIdRef.current;
+        // Only process if it's for our current battle
+        if (stoppedBattleId && bId && String(stoppedBattleId) !== String(bId)) return;
+
+        // If WE are the winner, ignore (we'll handle it via the judge response)
+        if (winnerUsername && activeUsername && winnerUsername.toLowerCase() === activeUsername.toLowerCase()) return;
+        if (winnerId && (user?._id || user?.id) && String(winnerId) === String(user?._id || user?.id)) return;
+
+        // If already handled, skip
+        if (hasWonRef.current || hasLostRef.current || isBattleConcludedRef.current) return;
+
+        // IMMEDIATELY stop the battle for the loser
+        hasLostRef.current = true;
+        setIsBattleConcluded(true);
+        isBattleConcludedRef.current = true;
+        isBattleRunningRef.current = false;
+        setTimerActive(false);
+        playWrongAnswerSound();
+        clearBattleSession(true);
+
+        try {
+          localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+          localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+          localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+          const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+          if (!completed.includes(bId)) {
+            completed.push(bId);
+            localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+          }
+        } catch {}
+
+        const ratingChange = isRated ? -12 : 0;
+        setMatchResult({
+          status: 'loss',
+          newRating: isRated ? Math.max(100, userModeRating + ratingChange) : userModeRating,
+          ratingChange,
+          isRated,
+          streak: 0,
+          mode,
+          opponent: opponentParam,
+          problemsSolved: solvedProblemSlugs.size,
+          totalProblems: matchProblems.length,
+          winnerName: winnerUsername || 'Opponent'
+        });
+
+        if (window.__DSA_ACTIVE_BATTLE__) {
+          window.__DSA_ACTIVE_BATTLE__.isRunning = false;
+          window.__DSA_ACTIVE_BATTLE__ = null;
+        }
+
+        fetchOpponentBattleCode(bId);
+
+        // Auto-redirect to profile after 5 seconds so the loser sees the Defeat modal briefly
+        setTimeout(() => {
+          clearBattleSession(true);
+          navigate('/profile', { replace: true });
+        }, 5000);
       });
     } catch (err) {
       console.warn('Live battle socket connect warning:', err);
@@ -1303,27 +1385,39 @@ export default function ProblemView() {
     } catch {}
   };
 
-  // Match timeout handler (records defeat if rated and displays time-out summary)
-  const handleTimeExpired = useCallback(async () => {
-    if (!isChallenge || matchResult || hasWonRef.current || isBattleConcludedRef.current || isContinuationMode) return;
+  // Match timeout handler (records Draw with ratings preserved and displays Draw summary)
+  const handleTimeExpired = useCallback(async (options = {}) => {
+    if (!isChallenge || matchResult || hasWonRef.current || hasLostRef.current || isBattleConcludedRef.current || isContinuationMode) return;
+
+    setIsBattleConcluded(true);
+    isBattleConcludedRef.current = true;
+    isBattleRunningRef.current = false;
+    setTimerActive(false);
+    setTimeLeft(0);
 
     playWrongAnswerSound();
 
-    if (socketRef.current) {
+    const bId = battleIdRef.current;
+
+    // Synchronize draw to both peers via socket
+    if (socketRef.current && bId) {
       try {
-        socketRef.current.emit('battle:live_leave', { battleId: battleIdRef.current });
+        socketRef.current.emit('battle:draw', { battleId: bId, reason: 'time_expired' });
+        socketRef.current.emit('battle:live_leave', { battleId: bId });
       } catch {}
     }
 
     clearBattleSession(true);
 
     try {
-      const bId = battleIdRef.current;
-      localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
-      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
-      if (!completed.includes(bId)) {
-        completed.push(bId);
-        localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+      if (bId) {
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+        localStorage.setItem(`dsa_battle_draw_${bId}`, 'true');
+        const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+        if (!completed.includes(bId)) {
+          completed.push(bId);
+          localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+        }
       }
     } catch {}
 
@@ -1332,21 +1426,23 @@ export default function ProblemView() {
     let ratingChange = 0;
 
     if (isRated) {
-      ratingChange = -12;
-      newRating = Math.max(100, userModeRating + ratingChange);
+      // In a Draw, rating change is 0 (ratings preserved without penalty)
+      ratingChange = 0;
+      newRating = userModeRating;
 
       if (activeToken) {
         try {
           await axios.post(
             `${API_BASE_URL}/api/battles/record`,
             {
-              battleId: battleIdRef.current,
+              battleId: bId,
               mode,
               timeControl: timeControlParam,
-              result: 'loss',
+              result: 'draw',
               problemTitle: problem?.title || activeSlug,
               opponentName: opponentParam,
               isRated: true,
+              ratingChange: 0,
               moves: 0,
               testAccuracy: '0%',
               playerCode: code,
@@ -1357,25 +1453,28 @@ export default function ProblemView() {
           );
           if (refreshUser) refreshUser();
         } catch (apiErr) {
-          console.warn('Error recording timeout loss to API:', apiErr.message);
+          console.warn('Error recording draw to API:', apiErr.message);
         }
       }
     }
 
-    fetchOpponentBattleCode(battleIdRef.current);
+    if (bId) {
+      fetchOpponentBattleCode(bId);
+    }
 
     setMatchResult({
-      status: 'timeout',
+      status: 'draw',
       newRating,
-      ratingChange,
+      ratingChange: 0,
       isRated,
-      streak: 0,
+      streak: user?.streak || 0,
       mode,
       opponent: opponentParam,
       problemsSolved: solvedProblemSlugs.size,
-      totalProblems: matchProblems.length
+      totalProblems: matchProblems.length,
+      isDraw: true
     });
-  }, [isChallenge, matchResult, isRated, userModeRating, token, mode, timeControlParam, problem, activeSlug, opponentParam, solvedProblemSlugs.size, matchProblems.length, refreshUser]);
+  }, [isChallenge, matchResult, isRated, userModeRating, token, mode, timeControlParam, problem, activeSlug, opponentParam, solvedProblemSlugs.size, matchProblems.length, refreshUser, user, code, language, opponentCode]);
 
   const handleTimeExpiredRef = useRef(handleTimeExpired);
   useEffect(() => {
@@ -1809,21 +1908,27 @@ export default function ProblemView() {
     clearBattleSession(true);
     try {
       const bId = battleIdRef.current;
-      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
-      if (!completed.includes(bId)) {
-        completed.push(bId);
-        localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+      if (bId) {
+        const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+        if (!completed.includes(bId)) {
+          completed.push(bId);
+          localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+        }
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+        if (hasWonRef.current) {
+          localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
+          localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+        } else if (hasLostRef.current) {
+          localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+          localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+        } else {
+          localStorage.setItem(`dsa_battle_draw_${bId}`, 'true');
+        }
       }
-      if (hasWonRef.current) {
-        localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
-        localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
-      }
-      if (hasLostRef.current) {
-        localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
-        localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
-      }
-      navigate(`/problem/${activeSlug}`, { replace: true });
     } catch {}
+
+    const problemListStr = (matchProblems && matchProblems.length > 0) ? matchProblems.join(',') : (activeSlug || 'two-sum');
+    navigate(`/problem/${activeSlug}?problemList=${encodeURIComponent(problemListStr)}&mode=practice&continuation=true`, { replace: true });
   };
 
   const handleSubmitCheatingReport = async (e) => {
@@ -1907,9 +2012,9 @@ export default function ProblemView() {
           explanation: 'Because nums[0] + nums[1] == 9, we return [0, 1].'
         },
         {
-          input: 'nums = [3,2,4], target = 6',
-          output: '[1,2]',
-          explanation: 'Because nums[1] + nums[2] == 6, we return [1, 2].'
+          input: 'nums = [1,5,8,3], target = 11',
+          output: '[2,3]',
+          explanation: 'Because nums[2] + nums[3] == 11, we return [2, 3].'
         },
         {
           input: 'nums = [3,3], target = 6',
@@ -2480,6 +2585,18 @@ export default function ProblemView() {
     setIsRunning(true);
     setActiveBottomTab('result');
 
+    // GUARD: Block submissions if the battle is already over (user lost or won)
+    // This prevents the defeated user from continuing to solve and getting misleading popups.
+    if (isChallenge && (hasLostRef.current || (isBattleConcludedRef.current && !hasWonRef.current && !isContinuationMode))) {
+      setIsRunning(false);
+      setRunResults({
+        status: 'Battle Ended',
+        errorMessage: 'This battle has already been concluded. Your opponent solved the problem first. You can continue practicing in normal mode.',
+        cases: []
+      });
+      return;
+    }
+
     const activeToken = token || localStorage.getItem('token');
 
     // Ensure the submitted code is saved to user's account so they can resume it in Normal Practice
@@ -2728,7 +2845,7 @@ export default function ProblemView() {
     }
   };
 
-  if (isChallenge && (initialIsConcluded || isBattleConcluded) && !matchResult && !showOpponentResignedModal) {
+  if (isChallenge && !isContinuationMode && (initialIsConcluded || isBattleConcluded) && !matchResult && !showOpponentResignedModal) {
     clearBattleSession(true);
     return <Navigate to="/profile" replace />;
   }
@@ -2921,7 +3038,7 @@ export default function ProblemView() {
       )}
 
       {/* MULTI-PROBLEM SWITCHER BAR (LeetCode Format with Dropdown & Arrow Option to go to Next Problem) */}
-      {(isChallenge || isContinuationMode) && matchProblems.length > 1 && (
+      {matchProblems.length > 1 && (
         <div className="bg-[#181714] border-b border-[#2d2a26] px-4 py-2 flex items-center justify-between gap-3 text-xs shrink-0 shadow-inner">
           {/* Left: Arrow options & LeetCode-style Dropdown */}
           <div className="flex items-center gap-2 relative" ref={problemDropdownRef}>
@@ -3984,30 +4101,27 @@ export default function ProblemView() {
           <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative animate-in zoom-in duration-200">
             <button
               type="button"
-              onClick={() => {
-                clearBattleSession(true);
-                navigate('/profile');
-              }}
+              onClick={handleContinueSolving}
               className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center text-sm font-bold transition cursor-pointer"
-              title="Close and return to profile"
+              title="Close popup and keep coding"
             >
               ✕
             </button>
             <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 shadow-xl ${
               matchResult.status === 'loss'
                 ? 'bg-gradient-to-tr from-rose-700 to-red-500'
-                : matchResult.status === 'timeout'
-                ? 'bg-gradient-to-tr from-amber-600 to-rose-500'
+                : (matchResult.status === 'draw' || matchResult.status === 'timeout')
+                ? 'bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 shadow-indigo-500/30 ring-4 ring-indigo-400/20'
                 : 'bg-gradient-to-tr from-amber-500 to-yellow-300'
             }`}>
-              {matchResult.status === 'loss' ? '💔' : matchResult.status === 'timeout' ? '⏳' : '🏆'}
+              {matchResult.status === 'loss' ? '💔' : (matchResult.status === 'draw' || matchResult.status === 'timeout') ? '🤝' : '🏆'}
             </div>
 
             <h2 className="text-2xl font-black text-white mb-1">
               {matchResult.status === 'loss'
                 ? 'Defeat'
-                : matchResult.status === 'timeout'
-                ? 'Time Expired!'
+                : (matchResult.status === 'draw' || matchResult.status === 'timeout')
+                ? 'Match Drawn — Time Expired!'
                 : 'Victory! Challenge Won'}
             </h2>
             <p className="text-xs text-[#8c8b88] mb-6">
@@ -4015,9 +4129,9 @@ export default function ProblemView() {
                 <span>
                   Defeated by <strong className="text-white">@{matchResult.winnerName || matchResult.opponent || 'Opponent'}</strong> in {matchResult.mode} match.
                 </span>
-              ) : matchResult.status === 'timeout' ? (
+              ) : (matchResult.status === 'draw' || matchResult.status === 'timeout') ? (
                 <span>
-                  Match time ran out against <strong className="text-white">@{matchResult.opponent || 'Opponent'}</strong> in {matchResult.mode} match.
+                  Time expired against <strong className="text-white">@{matchResult.opponent || 'Opponent'}</strong> in {matchResult.mode} match. Neither coder completed before the clock ran out. Match concluded in a <strong>Draw</strong> with ratings preserved.
                 </span>
               ) : (
                 <>
@@ -4037,16 +4151,27 @@ export default function ProblemView() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-[#8c8b88]">Rating Adjustment:</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-mono text-white/70">{matchResult.newRating - matchResult.ratingChange}</span>
-                      <span className="text-xs text-white/40">→</span>
-                      <span className={`text-base font-extrabold font-mono ${matchResult.ratingChange < 0 ? 'text-red-400' : 'text-[#81b64c]'}`}>
-                        {matchResult.newRating}
-                      </span>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                        matchResult.ratingChange < 0 ? 'bg-red-500/20 text-red-400' : 'bg-[#81b64c]/20 text-[#81b64c]'
-                      }`}>
-                        {matchResult.ratingChange > 0 ? `+${matchResult.ratingChange}` : matchResult.ratingChange} Elo
-                      </span>
+                      {(matchResult.status === 'draw' || matchResult.status === 'timeout' || matchResult.ratingChange === 0) ? (
+                        <>
+                          <span className="text-sm font-mono text-white/70">{matchResult.newRating}</span>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                            ±0 Elo (Draw)
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-sm font-mono text-white/70">{matchResult.newRating - matchResult.ratingChange}</span>
+                          <span className="text-xs text-white/40">→</span>
+                          <span className={`text-base font-extrabold font-mono ${matchResult.ratingChange < 0 ? 'text-red-400' : 'text-[#81b64c]'}`}>
+                            {matchResult.newRating}
+                          </span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                            matchResult.ratingChange < 0 ? 'bg-red-500/20 text-red-400' : 'bg-[#81b64c]/20 text-[#81b64c]'
+                          }`}>
+                            {matchResult.ratingChange > 0 ? `+${matchResult.ratingChange}` : matchResult.ratingChange} Elo
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -4065,15 +4190,23 @@ export default function ProblemView() {
 
                 <div className="flex items-center justify-between border-t border-white/5 pt-2 text-xs">
                   <span className="text-[#8c8b88]">Current Streak:</span>
-                  <span className={`font-extrabold flex items-center gap-1 ${matchResult.status === 'timeout' || matchResult.status === 'loss' ? 'text-zinc-400' : 'text-amber-400'}`}>
-                    <span>{matchResult.status === 'timeout' || matchResult.status === 'loss' ? '⏹️' : '🔥'}</span>
+                  <span className={`font-extrabold flex items-center gap-1 ${matchResult.status === 'loss' ? 'text-zinc-400' : 'text-amber-400'}`}>
+                    <span>{matchResult.status === 'loss' ? '⏹️' : '🔥'}</span>
                     <span>{matchResult.streak || 0} Day Streak</span>
                   </span>
                 </div>
 
-                <div className={`text-[11px] text-center font-medium ${matchResult.status === 'timeout' || matchResult.status === 'loss' ? 'text-amber-400' : 'text-[#81b64c]'}`}>
+                <div className={`text-[11px] text-center font-medium ${
+                  (matchResult.status === 'draw' || matchResult.status === 'timeout')
+                    ? 'text-blue-400'
+                    : matchResult.status === 'loss'
+                    ? 'text-amber-400'
+                    : 'text-[#81b64c]'
+                }`}>
                   {matchResult.isRated
-                    ? (matchResult.status === 'timeout' || matchResult.status === 'loss'
+                    ? ((matchResult.status === 'draw' || matchResult.status === 'timeout')
+                        ? '✓ Match concluded in a Draw — ratings preserved without change'
+                        : matchResult.status === 'loss'
                         ? '✓ Rated match result recorded into your Rating & Battle History'
                         : '✓ Rated challenge recorded into your Rating & Battle History')
                     : '✓ Non-rated challenge completed — ratings preserved without change'}
@@ -4120,7 +4253,21 @@ export default function ProblemView() {
             </div>
 
             {/* Option to Continue Solving Remaining Questions in Normal Editor */}
-            {matchResult.status?.startsWith('win') ? (
+            {matchResult.status === 'draw' || matchResult.status === 'timeout' ? (
+              <button
+                type="button"
+                onClick={handleContinueSolving}
+                className="w-full mb-3 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm py-3.5 px-4 rounded-xl transition shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-2 cursor-pointer group border border-emerald-400/30"
+              >
+                <span>💻</span>
+                <span>
+                  {matchProblems.length > 1
+                    ? `Continue Solving All ${matchProblems.length} Contest Problems (Practice Mode)`
+                    : 'Continue Solving in Practice Mode (Keep Coding)'}
+                </span>
+                <span className="group-hover:translate-x-1 transition-transform">→</span>
+              </button>
+            ) : matchResult.status?.startsWith('win') ? (
               <button
                 type="button"
                 onClick={handleContinueSolving}
@@ -4160,8 +4307,8 @@ export default function ProblemView() {
         </div>
       )}
 
-      {/* NORMAL PRACTICE CONGRATULATIONS & SOLVE MORE MODAL */}
-      {practiceSolvedModal && (!isChallenge || isContinuationMode || isBattleConcluded) && (
+      {/* NORMAL PRACTICE CONGRATULATIONS & SOLVE MORE MODAL — Never shown to battle losers */}
+      {practiceSolvedModal && (!isChallenge || isContinuationMode || isBattleConcluded) && !hasLostRef.current && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-[#21201d] border border-emerald-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200">
             {/* Top subtle glow */}

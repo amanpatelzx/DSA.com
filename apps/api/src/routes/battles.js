@@ -100,7 +100,7 @@ router.post('/record', protect, async (req, res) => {
       userResultScore = 0.5;
       opponentResultScore = 0.5;
       if (isRatedMatch) {
-        ratingChange = 2;
+        ratingChange = req.body.ratingChange !== undefined ? Number(req.body.ratingChange) : 0;
       }
     }
 
@@ -108,27 +108,31 @@ router.post('/record', protect, async (req, res) => {
 
     // Only update ratings when challenging a real person, not a bot!
     if (isRatedMatch) {
-      if (!user.ratings) user.ratings = {};
-      user.ratings[ratingKey] = newRating;
+      if (ratingChange !== 0) {
+        if (!user.ratings) user.ratings = {};
+        user.ratings[ratingKey] = newRating;
+      }
       await user.save();
 
       // Real opponent rating adjustment
       if (realOpponent) {
         try {
           const oppRating = (realOpponent.ratings && realOpponent.ratings[ratingKey]) || 1500;
-          const oppChange = result === 'win' ? -12 : result === 'loss' ? 16 : 2;
-          if (!realOpponent.ratings) realOpponent.ratings = {};
-          realOpponent.ratings[ratingKey] = Math.max(100, oppRating + oppChange);
-          await realOpponent.save();
+          const oppChange = result === 'win' ? -12 : result === 'loss' ? 16 : 0;
+          if (oppChange !== 0) {
+            if (!realOpponent.ratings) realOpponent.ratings = {};
+            realOpponent.ratings[ratingKey] = Math.max(100, oppRating + oppChange);
+            await realOpponent.save();
 
-          await RatingHistory.create({
-            userId: realOpponent._id,
-            mode: ['bullet', 'blitz', 'rapid', 'classical'].includes(ratingKey) ? ratingKey : 'blitz',
-            oldRating: oppRating,
-            ratingChange: oppChange,
-            newRating: realOpponent.ratings[ratingKey],
-            reason: 'BATTLE_PVP'
-          });
+            await RatingHistory.create({
+              userId: realOpponent._id,
+              mode: ['bullet', 'blitz', 'rapid', 'classical'].includes(ratingKey) ? ratingKey : 'blitz',
+              oldRating: oppRating,
+              ratingChange: oppChange,
+              newRating: realOpponent.ratings[ratingKey],
+              reason: 'BATTLE_PVP'
+            });
+          }
         } catch {}
       }
     } else {
@@ -203,8 +207,8 @@ router.post('/record', protect, async (req, res) => {
 
     if (req.body.battleId) {
       markBattleConcluded(req.body.battleId, {
-        winnerUsername: result === 'win' ? user.username : finalOpponentName,
-        winnerId: result === 'win' ? user._id : (realOpponent ? realOpponent._id : null),
+        winnerUsername: result === 'win' ? user.username : (result === 'draw' ? 'Draw' : finalOpponentName),
+        winnerId: result === 'win' ? user._id : (result === 'draw' ? null : (realOpponent ? realOpponent._id : null)),
         reason: result
       });
       if (!battleCodeStorage.has(req.body.battleId)) {

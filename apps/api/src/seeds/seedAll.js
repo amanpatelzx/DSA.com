@@ -2,6 +2,21 @@ import { seedProblems } from './seedProblems300.js';
 import { seedEasyProblems } from './seedEasyProblems.js';
 import { connectDB } from '../config/db.js';
 import Problem from '../models/Problem.js';
+import { SINGLE_EX_HIDDEN_TESTCASES } from './enrichHiddenTestCases.js';
+
+const getHiddenTestCases = (prob) => {
+  if (prob.hiddenTestCases && prob.hiddenTestCases.length > 0) return prob.hiddenTestCases;
+  if (prob.examples && prob.examples.length >= 2) {
+    return prob.examples.slice(1).map(ex => ({ input: ex.input, output: ex.output !== undefined && ex.output !== null ? String(ex.output) : '', explanation: ex.explanation || '' }));
+  }
+  if (SINGLE_EX_HIDDEN_TESTCASES[prob.slug]) {
+    return SINGLE_EX_HIDDEN_TESTCASES[prob.slug];
+  }
+  if (prob.examples && prob.examples.length === 1) {
+    return [{ input: prob.examples[0].input, output: prob.examples[0].output !== undefined && prob.examples[0].output !== null ? String(prob.examples[0].output) : '', explanation: prob.examples[0].explanation || '' }];
+  }
+  return [];
+};
 
 const runAllSeeds = async () => {
   try {
@@ -33,6 +48,7 @@ const runAllSeeds = async () => {
         followUp: prob.followUp,
         examples: prob.examples || [],
         visibleTestCases: prob.examples ? prob.examples.map(ex => ({ input: ex.input, output: ex.output })) : [],
+        hiddenTestCases: getHiddenTestCases(prob),
         supportedLanguages: ['cpp', 'python', 'javascript', 'java'],
         status: 'ACTIVE'
       };
@@ -60,6 +76,7 @@ const runAllSeeds = async () => {
         followUp: prob.followUp,
         examples: prob.examples || [],
         visibleTestCases: prob.examples ? prob.examples.map(ex => ({ input: ex.input, output: ex.output })) : [],
+        hiddenTestCases: getHiddenTestCases(prob),
         supportedLanguages: ['cpp', 'python', 'javascript', 'java'],
         status: 'ACTIVE'
       };

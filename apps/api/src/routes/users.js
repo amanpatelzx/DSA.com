@@ -394,7 +394,7 @@ const formatUserProfile = async (user, externalProfiles) => {
     const isBot = !b.opponentName || ['bot', 'stockfish', 'computer', 'algo_expert', 'deep_recursion', 'matrix_solver', 'ai_'].some(k => b.opponentName.toLowerCase().includes(k));
     const isRated = b.isRated === true && !isBot;
 
-    const changeNum = isRated ? (userPlayer.ratingChange || (isWin ? 16 : isDraw ? 2 : -12)) : 0;
+    const changeNum = isRated ? (userPlayer.ratingChange !== undefined ? userPlayer.ratingChange : (isWin ? 16 : isDraw ? 0 : -12)) : 0;
     const changeStr = isRated ? (changeNum > 0 ? `+${changeNum}` : `${changeNum}`) : '+0';
 
     const pTitle = b.problemTitle || 'Two Sum';
@@ -496,7 +496,7 @@ const formatUserProfile = async (user, externalProfiles) => {
       const userP = (b.players && b.players.find(p => p.userId && p.userId.toString() === user._id.toString())) || (b.players && b.players[0]) || {};
       const isWin = b.winnerId && b.winnerId.toString() === user._id.toString();
       const isDraw = b.isDraw || userP.score === 0.5;
-      const chg = userP.ratingChange || (isWin ? 16 : isDraw ? 2 : -12);
+      const chg = userP.ratingChange !== undefined ? userP.ratingChange : (isWin ? 16 : isDraw ? 0 : -12);
       if (m === 'rapid') { curRapid += chg; ratingCurves.rapid.push(curRapid); }
       else if (m === 'bullet') { curBullet += chg; ratingCurves.bullet.push(curBullet); }
       else { curBlitz += chg; ratingCurves.blitz.push(curBlitz); }

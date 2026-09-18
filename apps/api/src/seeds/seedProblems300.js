@@ -21,7 +21,7 @@ export const PROBLEMS_300 = [
     followUp: "Can you achieve an optimal O(n) runtime complexity?",
     examples: [
       { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "nums[0] + nums[1] == 9, so indices [0, 1] are returned." },
-      { input: "nums = [3,2,4], target = 6", output: "[1,2]", explanation: "nums[1] + nums[2] == 6, return [1, 2]." }
+      { input: "nums = [1,5,8,3], target = 11", output: "[2,3]", explanation: "nums[2] + nums[3] == 11, return [2, 3]." }
     ]
   },
   {

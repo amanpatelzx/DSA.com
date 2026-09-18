@@ -127,7 +127,7 @@ class Solution:
 `,
     testcases: [
       { input: 'nums = [2,7,11,15], target = 9', expected: '[0,1]' },
-      { input: 'nums = [3,2,4], target = 6', expected: '[1,2]' }
+      { input: 'nums = [1,5,8,3], target = 11', expected: '[2,3]' }
     ]
   });
   console.log(`  -> Status: ${t2.status} (${t2.cases.filter(c => c.passed).length}/${t2.cases.length} passed)`);

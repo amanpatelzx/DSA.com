@@ -42,11 +42,9 @@ export default function AdminPanel() {
 
   // Testcases in Form
   const [formExamples, setFormExamples] = useState([
-    { input: 'nums = [2,7,11,15], target = 9', output: '[0,1]', explanation: 'Because nums[0] + nums[1] == 9' }
+    { input: '', output: '', explanation: '' }
   ]);
-  const [formHiddenTests, setFormHiddenTests] = useState([
-    { input: 'nums = [3,3], target = 6', output: '[0,1]' }
-  ]);
+  const [formHiddenTests, setFormHiddenTests] = useState([]);
   const [formMetaData, setFormMetaData] = useState(null);
   const [formCodeSnippets, setFormCodeSnippets] = useState([]);
   const [selectedSnippetLang, setSelectedSnippetLang] = useState('cpp');
@@ -480,19 +478,16 @@ export default function AdminPanel() {
     setFormDifficulty('Easy');
     setFormPoints(3);
     setFormStatus('ACTIVE');
-    setFormTags('Array, Hash Table');
-    setFormDescription('Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.');
-    setFormConstraints('2 <= nums.length <= 10^4\n-10^9 <= nums[i] <= 10^9\n-10^9 <= target <= 10^9');
-    setFormFollowUp('Can you come up with an algorithm that is less than O(n^2) time complexity?');
+    setFormTags('');
+    setFormDescription('');
+    setFormConstraints('');
+    setFormFollowUp('');
     setFormTimeLimit(2000);
     setFormMemoryLimit(256);
     setFormExamples([
-      { input: 'nums = [2,7,11,15], target = 9', output: '[0,1]', explanation: 'Because nums[0] + nums[1] == 9, we return [0, 1].' }
+      { input: '', output: '', explanation: '' }
     ]);
-    setFormHiddenTests([
-      { input: 'nums = [3,2,4], target = 6', output: '[1,2]' },
-      { input: 'nums = [3,3], target = 6', output: '[0,1]' }
-    ]);
+    setFormHiddenTests([]);
     setFormMetaData(null);
     setFormCodeSnippets([]);
     setSelectedSnippetLang('cpp');
@@ -524,13 +519,16 @@ export default function AdminPanel() {
     setFormTimeLimit(p.timeLimit || 2000);
     setFormMemoryLimit(p.memoryLimit || 256);
 
-    setFormExamples(p.examples && p.examples.length > 0 ? p.examples : [
-      { input: 'nums = [2,7,11,15], target = 9', output: '[0,1]', explanation: '' }
+    setFormExamples(Array.isArray(p.examples) && p.examples.length > 0 ? p.examples : [
+      { input: '', output: '', explanation: '' }
     ]);
 
-    setFormHiddenTests(p.hiddenTestCases && p.hiddenTestCases.length > 0 ? p.hiddenTestCases : [
-      { input: 'nums = [3,2,4], target = 6', output: '[1,2]' }
-    ]);
+    // Sanitize any residual wrong testcase like nums = [3,2,4], target = 6
+    const rawHidden = Array.isArray(p.hiddenTestCases) ? p.hiddenTestCases : [];
+    const cleanedHidden = rawHidden.filter(
+      tc => !(tc && tc.input && tc.input.includes('3,2,4') && tc.input.includes('target = 6'))
+    );
+    setFormHiddenTests(cleanedHidden);
 
     setFormMetaData(p.metaData || null);
     setFormCodeSnippets(p.codeSnippets || []);
@@ -2316,51 +2314,57 @@ export default function AdminPanel() {
                     </div>
 
                     <div className="space-y-3">
-                      {formHiddenTests.map((tc, idx) => (
-                        <div key={idx} className="bg-[#181714] border border-white/10 rounded-xl p-3.5 space-y-2">
-                          <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
-                            <span>Hidden Case {idx + 1}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteHiddenTest(idx)}
-                              className="text-red-400 hover:text-red-300 cursor-pointer"
-                            >
-                              Remove
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs">
-                            <div>
-                              <label className="text-[10px] text-[#8c8b88] block mb-0.5">Input</label>
-                              <input
-                                type="text"
-                                required
-                                value={tc.input}
-                                onChange={(e) => handleUpdateHiddenTest(idx, 'input', e.target.value)}
-                                placeholder="nums = [3,3], target = 6"
-                                className="w-full bg-[#100f0d] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#81b64c]"
-                              />
-                              {!checkBracketBalance(tc.input) && (
-                                <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 font-sans mt-1">
-                                  ⚠️ Syntax warning: Unbalanced brackets or quotes in input
-                                </div>
-                              )}
-                            </div>
-
-                            <div>
-                              <label className="text-[10px] text-[#8c8b88] block mb-0.5">Expected Output</label>
-                              <input
-                                type="text"
-                                required
-                                value={tc.output}
-                                onChange={(e) => handleUpdateHiddenTest(idx, 'output', e.target.value)}
-                                placeholder="[0,1]"
-                                className="w-full bg-[#100f0d] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-[#81b64c] font-bold focus:outline-none focus:border-[#81b64c]"
-                              />
-                            </div>
-                          </div>
+                      {formHiddenTests.length === 0 ? (
+                        <div className="bg-[#181714] border border-dashed border-white/10 rounded-xl p-5 text-center text-xs text-[#8c8b88]">
+                          No hidden test cases configured for this problem. Click <strong className="text-white">+ Add Hidden Case</strong> above to add one.
                         </div>
-                      ))}
+                      ) : (
+                        formHiddenTests.map((tc, idx) => (
+                          <div key={idx} className="bg-[#181714] border border-white/10 rounded-xl p-3.5 space-y-2">
+                            <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
+                              <span>Hidden Case {idx + 1}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteHiddenTest(idx)}
+                                className="text-red-400 hover:text-red-300 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-xs">
+                              <div>
+                                <label className="text-[10px] text-[#8c8b88] block mb-0.5">Input</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={tc.input}
+                                  onChange={(e) => handleUpdateHiddenTest(idx, 'input', e.target.value)}
+                                  placeholder="nums = [3,3], target = 6"
+                                  className="w-full bg-[#100f0d] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#81b64c]"
+                                />
+                                {!checkBracketBalance(tc.input) && (
+                                  <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 font-sans mt-1">
+                                    ⚠️ Syntax warning: Unbalanced brackets or quotes in input
+                                  </div>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="text-[10px] text-[#8c8b88] block mb-0.5">Expected Output</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={tc.output}
+                                  onChange={(e) => handleUpdateHiddenTest(idx, 'output', e.target.value)}
+                                  placeholder="[0,1]"
+                                  className="w-full bg-[#100f0d] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-[#81b64c] font-bold focus:outline-none focus:border-[#81b64c]"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>

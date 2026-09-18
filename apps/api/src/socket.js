@@ -706,9 +706,12 @@ export const initSocket = (httpServer) => {
       // If battle already completed, notify joining socket immediately
       if (isBattleConcluded(battleId)) {
         const info = concludedBattles.get(String(battleId));
+        const isDrawMatch = info?.reason === 'draw' || info?.reason === 'time_expired' || info?.winnerUsername === 'Draw';
         socket.emit('battle:already_concluded', {
           battleId,
-          winnerUsername: info?.winnerUsername || 'Opponent'
+          winnerUsername: info?.winnerUsername || (isDrawMatch ? 'Draw' : 'Opponent'),
+          reason: info?.reason || (isDrawMatch ? 'draw' : 'already_completed'),
+          isDraw: isDrawMatch
         });
         return;
       }
@@ -725,14 +728,17 @@ export const initSocket = (httpServer) => {
             if (winUser) winName = winUser.username;
           }
           if (!winName) winName = existingBattle.opponentName || 'Opponent';
+          const isDrawMatch = existingBattle.isDraw || (!existingBattle.winnerId && existingBattle.status === 'COMPLETED');
           markBattleConcluded(battleId, {
-            winnerUsername: winName,
+            winnerUsername: isDrawMatch ? 'Draw' : winName,
             winnerId: existingBattle.winnerId,
-            reason: 'already_completed'
+            reason: isDrawMatch ? 'draw' : 'already_completed'
           });
           socket.emit('battle:already_concluded', {
             battleId,
-            winnerUsername: winName
+            winnerUsername: isDrawMatch ? 'Draw' : winName,
+            reason: isDrawMatch ? 'draw' : 'already_completed',
+            isDraw: isDrawMatch
           });
         }
       } catch {}
@@ -913,6 +919,41 @@ export const initSocket = (httpServer) => {
         battleId,
         resignedUsername: actualResignedUsername,
         winnerUsername: winnerUsername || 'You'
+      });
+    });
+
+    // Relay battle draw / time expired event to both peers simultaneously
+    socket.on('battle:draw', ({ battleId, reason }) => {
+      if (!battleId) return;
+      const bId = String(battleId);
+      if (isBattleConcluded(bId)) return;
+
+      markBattleConcluded(bId, {
+        winnerUsername: 'Draw',
+        winnerId: null,
+        reason: reason || 'draw'
+      });
+
+      io.to(bId).emit('battle:draw', {
+        battleId: bId,
+        reason: reason || 'draw'
+      });
+    });
+
+    socket.on('battle:time_expired', ({ battleId }) => {
+      if (!battleId) return;
+      const bId = String(battleId);
+      if (isBattleConcluded(bId)) return;
+
+      markBattleConcluded(bId, {
+        winnerUsername: 'Draw',
+        winnerId: null,
+        reason: 'time_expired'
+      });
+
+      io.to(bId).emit('battle:draw', {
+        battleId: bId,
+        reason: 'time_expired'
       });
     });
 

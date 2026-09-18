@@ -11,6 +11,10 @@ import { isBattleConcluded, markBattleConcluded, concludedBattles, getIO } from 
 
 const router = express.Router();
 
+// Atomic per-battle lock to prevent race conditions when two players submit simultaneously.
+// Maps battleId -> true while the first "Accepted" submission is being processed.
+const battleLocks = new Map();
+
 // Helper to get authenticated user if token present (optional auth for Run, required for Submission)
 const getOptionalUser = async (req) => {
   try {
@@ -103,7 +107,7 @@ router.post('/submit', async (req, res) => {
       if (slug === 'two-sum') {
         testcases = [
           { input: 'nums = [2,7,11,15], target = 9', expected: '[0,1]' },
-          { input: 'nums = [3,2,4], target = 6', expected: '[1,2]' },
+          { input: 'nums = [1,5,8,3], target = 11', expected: '[2,3]' },
           { input: 'nums = [3,3], target = 6', expected: '[0,1]' }
         ];
       } else if (slug === 'valid-parentheses') {
@@ -130,6 +134,29 @@ router.post('/submit', async (req, res) => {
     let ratingChange = 0;
     let newRating = 1500;
     let isRatedMatch = false;
+    let battleAlreadyFinished = false;
+    let existingBattleWinnerUsername = null;
+
+    // ATOMIC LOCK: Check if battle is already concluded or locked by another concurrent request
+    // This prevents a race condition where two players submit simultaneously and both get treated as winners.
+    if (battleId) {
+      const bIdStr = String(battleId);
+      if (isBattleConcluded(bIdStr) || isContinuation || clientConcluded) {
+        battleAlreadyFinished = true;
+      } else if (result.status === 'Accepted') {
+        // For accepted submissions in an active battle, acquire a lock.
+        // The first request to reach here wins; the second sees the lock and treats battle as finished.
+        if (battleLocks.has(bIdStr)) {
+          battleAlreadyFinished = true;
+        } else {
+          battleLocks.set(bIdStr, true);
+          // Auto-cleanup lock after 30 seconds to prevent memory leaks
+          setTimeout(() => battleLocks.delete(bIdStr), 30000);
+        }
+      }
+    } else {
+      battleAlreadyFinished = Boolean(isContinuation || clientConcluded);
+    }
 
     if (user) {
       if (!problem) {
@@ -160,14 +187,6 @@ router.post('/submit', async (req, res) => {
       const ratingKey = (mode || 'blitz').toLowerCase();
       newRating = (user.ratings && user.ratings[ratingKey]) || 1500;
 
-      // Check if battle is already finished or concluded
-      let battleAlreadyFinished = Boolean(
-        isContinuation ||
-        clientConcluded ||
-        (battleId && isBattleConcluded(battleId))
-      );
-
-      let existingBattleWinnerUsername = null;
       if (!battleAlreadyFinished && battleId) {
         try {
           const existingBattle = await Battle.findOne({
@@ -256,6 +275,23 @@ router.post('/submit', async (req, res) => {
             winnerId: user._id,
             reason: 'win'
           });
+
+          // Emit battle:force_stop to ALL sockets in the battle room
+          // This immediately notifies the opponent that the battle has ended,
+          // even before the winner's client emits battle:won via socket.
+          try {
+            const io = getIO();
+            if (io) {
+              io.to(String(battleId)).emit('battle:force_stop', {
+                battleId: String(battleId),
+                winnerUsername: user.username,
+                winnerId: String(user._id),
+                reason: 'opponent_solved'
+              });
+            }
+          } catch (forceStopErr) {
+            console.warn('battle:force_stop emit error:', forceStopErr.message);
+          }
         }
 
         await user.save();

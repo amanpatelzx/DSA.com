@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import RatingHistory from '../models/RatingHistory.js';
 import { protect } from '../middleware/authMiddleware.js';
 import BattleReport from '../models/BattleReport.js';
-import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage, getIO } from '../socket.js';
+import { getTopLiveBattle, liveBattles, getPlatformStats, broadcastPlatformStats, battleCodeStorage, getIO, isBattleConcluded, markBattleConcluded, concludedBattles } from '../socket.js';
 import { findRealOpponent } from '../utils/opponentHelper.js';
 import { getBotSolution } from '../utils/botSolutions.js';
 
@@ -32,6 +32,42 @@ router.post('/record', protect, async (req, res) => {
 
     const ratingKey = mode.toLowerCase();
     const currentRating = (user.ratings && user.ratings[ratingKey]) || 1500;
+
+    const battleId = req.body.battleId;
+    let battleAlreadyConcluded = Boolean(battleId && isBattleConcluded(battleId));
+
+    if (!battleAlreadyConcluded && battleId) {
+      try {
+        const existing = await Battle.findOne({
+          battleId,
+          status: { $in: ['COMPLETED', 'RESIGNED'] }
+        });
+        if (existing) {
+          battleAlreadyConcluded = true;
+          let winName = existing.winnerUsername || '';
+          if (!winName && existing.winnerId) {
+            const winUser = await User.findById(existing.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existing.opponentName || 'Opponent';
+          markBattleConcluded(battleId, {
+            winnerUsername: winName,
+            winnerId: existing.winnerId,
+            reason: 'already_completed'
+          });
+        }
+      } catch {}
+    }
+
+    if (battleAlreadyConcluded) {
+      return res.json({
+        message: 'Match already concluded',
+        battleId,
+        alreadyConcluded: true,
+        userRating: currentRating,
+        isRated: false
+      });
+    }
 
     // Check whether the match is rated and not against an explicit bot
     const isExplicitNonRated = req.body.isRated === false || req.body.isRated === 'false' || req.body.isRated === 0 || req.body.isRated === '0';
@@ -99,6 +135,23 @@ router.post('/record', protect, async (req, res) => {
       await user.save();
     }
 
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('user:profile_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: user.streak,
+          ratings: user.ratings
+        });
+        io.emit('user:streak_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: user.streak
+        });
+      }
+    } catch {}
+
     // Default computer / bot opponents if none provided
     const defaultOpponents = [
       { name: 'BOT', flag: '🤖', rating: 1510 },
@@ -149,6 +202,11 @@ router.post('/record', protect, async (req, res) => {
     });
 
     if (req.body.battleId) {
+      markBattleConcluded(req.body.battleId, {
+        winnerUsername: result === 'win' ? user.username : finalOpponentName,
+        winnerId: result === 'win' ? user._id : (realOpponent ? realOpponent._id : null),
+        reason: result
+      });
       if (!battleCodeStorage.has(req.body.battleId)) {
         battleCodeStorage.set(req.body.battleId, new Map());
       }
@@ -401,12 +459,30 @@ router.post('/resign', protect, async (req, res) => {
 
     const newRating = isRatedMatch ? Math.max(100, currentRating + ratingChange) : currentRating;
 
-    user.streak = 0;
+    // Match loss does not reset daily problem solving streak
+    const currentStreak = user.streak || 1;
     if (isRatedMatch) {
       if (!user.ratings) user.ratings = {};
       user.ratings[ratingKey] = newRating;
     }
     await user.save();
+
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('user:profile_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: currentStreak,
+          ratings: user.ratings
+        });
+        io.emit('user:streak_update', {
+          userId: user._id.toString(),
+          username: user.username,
+          streak: currentStreak
+        });
+      }
+    } catch {}
 
     // If opponent is a real user in the system, award them +16
     const realOpponent = isRatedMatch ? await findRealOpponent(opponentName, user._id) : null;
@@ -471,6 +547,10 @@ router.post('/resign', protect, async (req, res) => {
     }
 
     if (req.body.battleId) {
+      markBattleConcluded(req.body.battleId, {
+        winnerUsername: opponentName || 'Opponent',
+        reason: 'resigned'
+      });
       if (liveBattles.has(req.body.battleId)) {
         liveBattles.delete(req.body.battleId);
       }
@@ -502,6 +582,51 @@ router.post('/resign', protect, async (req, res) => {
     res.status(500).json({ message: 'Server error during battle resignation' });
   }
 });
+
+// @route   GET /api/battles/:battleId/status
+// @desc    Check whether a battle has concluded and who won
+// @access  Public
+router.get('/:battleId/status', async (req, res) => {
+  try {
+    const { battleId } = req.params;
+    if (!battleId) {
+      return res.status(400).json({ message: 'battleId is required' });
+    }
+
+    if (isBattleConcluded(battleId)) {
+      const mem = concludedBattles.get(String(battleId));
+      return res.json({
+        isConcluded: true,
+        winnerUsername: mem?.winnerUsername || 'Opponent',
+        reason: mem?.reason || 'completed'
+      });
+    }
+
+    const battle = await Battle.findOne({
+      battleId,
+      status: { $in: ['COMPLETED', 'RESIGNED'] }
+    });
+
+    if (battle) {
+      markBattleConcluded(battleId, {
+        winnerUsername: battle.opponentName,
+        winnerId: battle.winnerId,
+        reason: battle.status
+      });
+      return res.json({
+        isConcluded: true,
+        winnerUsername: battle.opponentName,
+        status: battle.status
+      });
+    }
+
+    res.json({ isConcluded: false });
+  } catch (err) {
+    console.warn('Error checking battle status:', err.message);
+    res.status(500).json({ message: 'Error checking battle status' });
+  }
+});
+
 // @route   GET /api/battles/:battleId/code
 // @desc    Retrieve both players' code from a finished or active battle
 // @access  Public
@@ -674,6 +799,55 @@ router.post('/report', protect, async (req, res) => {
   } catch (err) {
     console.error('Submit cheating report error:', err);
     res.status(500).json({ message: err.message || 'Server error submitting cheating report' });
+  }
+});
+
+// @route   GET /api/battles/:battleId/status
+// @desc    Check whether a battle has completed, resigned, or concluded
+// @access  Public
+router.get('/:battleId/status', async (req, res) => {
+  try {
+    const { battleId } = req.params;
+    if (!battleId) {
+      return res.json({ isConcluded: false });
+    }
+
+    const bId = String(battleId);
+    const isMemConcluded = isBattleConcluded(bId);
+    let winName = isMemConcluded ? concludedBattles.get(bId)?.winnerUsername : '';
+
+    const existingBattle = await Battle.findOne({
+      battleId: bId,
+      status: { $in: ['COMPLETED', 'RESIGNED', 'ABANDONED', 'CANCELLED'] }
+    });
+
+    if (existingBattle) {
+      if (!winName) {
+        winName = existingBattle.winnerUsername || '';
+        if (!winName && existingBattle.winnerId) {
+          const winUser = await User.findById(existingBattle.winnerId).select('username');
+          if (winUser) winName = winUser.username;
+        }
+        if (!winName) winName = existingBattle.opponentName || 'Opponent';
+      }
+      return res.json({
+        isConcluded: true,
+        status: existingBattle.status,
+        winnerUsername: winName
+      });
+    }
+
+    if (isMemConcluded) {
+      return res.json({
+        isConcluded: true,
+        status: 'COMPLETED',
+        winnerUsername: winName || 'Opponent'
+      });
+    }
+
+    res.json({ isConcluded: false });
+  } catch (err) {
+    res.json({ isConcluded: false });
   }
 });
 

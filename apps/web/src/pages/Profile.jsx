@@ -1,18 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
+import API_BASE_URL from '../config/api';
 import { fetchRandomBattleProblems } from '../utils/problemSelector';
 
 export default function Profile() {
   const { username } = useParams();
   const [searchParams] = useSearchParams();
   const { user: authUser, token, isLoggedIn, refreshUser } = useAuth();
-  const { sendChallenge, openDirectChallenge, isUserOnline } = useSocket();
+  const { socket, sendChallenge, openDirectChallenge, isUserOnline } = useSocket();
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [streakGlow, setStreakGlow] = useState(false);
   
   const initialTab = (searchParams.get('tab') === 'battles' || searchParams.get('tab') === 'history')
     ? 'battles'
@@ -31,6 +33,29 @@ export default function Profile() {
     'problem', 'problems', 'training', 'learn', 'watch', 'community',
     'search', 'admin', 'login', 'signup', 'profile', 'arena'
   ];
+
+  // Silent re-fetch of full profile without jarring loading spinners (for live socket updates)
+  const fetchProfileSilently = useCallback(async () => {
+    try {
+      if (isMe) {
+        const activeToken = token || localStorage.getItem('token');
+        if (!activeToken) return;
+        const res = await axios.get(`${API_BASE_URL}/api/users/me`, {
+          headers: { Authorization: `Bearer ${activeToken}` }
+        });
+        if (res.data?.user) {
+          setProfileData(res.data);
+        }
+      } else if (username) {
+        const res = await axios.get(`${API_BASE_URL}/api/users/${encodeURIComponent(username)}`);
+        if (res.data?.user) {
+          setProfileData(res.data);
+        }
+      }
+    } catch (err) {
+      console.warn('Silent profile fetch error:', err.message);
+    }
+  }, [isMe, token, username]);
 
   useEffect(() => {
     // If a reserved route slipped through to /:username, redirect to its dedicated route
@@ -56,7 +81,7 @@ export default function Profile() {
             return;
           }
 
-          const res = await axios.get('http://localhost:5000/api/users/me', {
+          const res = await axios.get(`${API_BASE_URL}/api/users/me`, {
             headers: {
               Authorization: `Bearer ${activeToken}`
             }
@@ -67,7 +92,7 @@ export default function Profile() {
             localStorage.setItem('username', res.data.user.username);
           }
         } else {
-          const res = await axios.get(`http://localhost:5000/api/users/${username}`);
+          const res = await axios.get(`${API_BASE_URL}/api/users/${encodeURIComponent(username)}`);
           setProfileData(res.data);
         }
       } catch (err) {
@@ -80,6 +105,94 @@ export default function Profile() {
 
     fetchProfile();
   }, [username, isMe, token, navigate]);
+
+  // Real-time socket synchronization for user streak and live profile stats
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleStreakUpdate = (data) => {
+      if (!data) return;
+      const currentTargetId = profileData?.user?._id || profileData?.user?.id;
+      const currentTargetName = profileData?.user?.username?.toLowerCase();
+      const eventUserId = data.userId;
+      const eventUsername = data.username?.toLowerCase();
+
+      const isMatch = (currentTargetId && eventUserId && String(currentTargetId) === String(eventUserId)) ||
+                      (currentTargetName && eventUsername && currentTargetName === eventUsername) ||
+                      (isMe && authUser && (String(authUser._id || authUser.id) === String(eventUserId) || authUser.username?.toLowerCase() === eventUsername));
+
+      if (isMatch && data.streak !== undefined) {
+        setProfileData(prev => {
+          if (!prev?.user) return prev;
+          return {
+            ...prev,
+            user: {
+              ...prev.user,
+              streak: data.streak
+            }
+          };
+        });
+        setStreakGlow(true);
+        setTimeout(() => setStreakGlow(false), 3000);
+      }
+    };
+
+    const handleProfileUpdate = (data) => {
+      if (!data) return;
+      const currentTargetId = profileData?.user?._id || profileData?.user?.id;
+      const currentTargetName = profileData?.user?.username?.toLowerCase();
+      const eventUserId = data.userId;
+      const eventUsername = data.username?.toLowerCase();
+
+      const isMatch = (currentTargetId && eventUserId && String(currentTargetId) === String(eventUserId)) ||
+                      (currentTargetName && eventUsername && currentTargetName === eventUsername) ||
+                      (isMe && authUser && (String(authUser._id || authUser.id) === String(eventUserId) || authUser.username?.toLowerCase() === eventUsername));
+
+      if (isMatch) {
+        setProfileData(prev => {
+          if (!prev?.user) return prev;
+          return {
+            ...prev,
+            user: {
+              ...prev.user,
+              streak: data.streak !== undefined ? data.streak : prev.user.streak,
+              ratings: data.ratings ? { ...prev.user.ratings, ...data.ratings } : prev.user.ratings
+            }
+          };
+        });
+        if (data.streak !== undefined) {
+          setStreakGlow(true);
+          setTimeout(() => setStreakGlow(false), 3000);
+        }
+        fetchProfileSilently();
+      }
+    };
+
+    socket.on('user:streak_update', handleStreakUpdate);
+    socket.on('user:profile_update', handleProfileUpdate);
+
+    return () => {
+      socket.off('user:streak_update', handleStreakUpdate);
+      socket.off('user:profile_update', handleProfileUpdate);
+    };
+  }, [socket, profileData?.user?._id, profileData?.user?.username, isMe, authUser, fetchProfileSilently]);
+
+  // Keep streak in sync if authUser was updated
+  useEffect(() => {
+    if (isMe && authUser?.streak !== undefined && profileData?.user) {
+      if (profileData.user.streak !== authUser.streak) {
+        setProfileData(prev => prev ? {
+          ...prev,
+          user: {
+            ...prev.user,
+            streak: authUser.streak
+          }
+        } : prev);
+        setStreakGlow(true);
+        setTimeout(() => setStreakGlow(false), 2500);
+      }
+    }
+  }, [isMe, authUser?.streak]);
 
   // Sync browser URL bar to /:username while preserving query params and hash
   useEffect(() => {
@@ -2606,13 +2719,24 @@ export default function Profile() {
         <div className="lg:col-span-4 xl:col-span-3 flex flex-col gap-5">
           
           {/* Streak Card */}
-          <div className="bg-[#21201d] border border-[#2d2a26] rounded-2xl p-4 flex items-center gap-3.5 shadow-md">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-2xl shadow-lg">
+          <div className={`bg-[#21201d] border rounded-2xl p-4 flex items-center gap-3.5 shadow-md transition-all duration-500 ${
+            streakGlow 
+              ? 'border-amber-500/80 ring-2 ring-amber-500/30 scale-[1.02] shadow-amber-500/20' 
+              : 'border-[#2d2a26]'
+          }`}>
+            <div className={`w-12 h-12 rounded-full bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-2xl shadow-lg transition-transform duration-300 ${
+              streakGlow ? 'scale-110 rotate-6 animate-bounce' : ''
+            }`}>
               🔥
             </div>
             <div>
-              <div className="text-lg font-extrabold text-white">
-                {user.streak ?? 0} Day Streak
+              <div className="text-lg font-extrabold text-white flex items-center gap-2">
+                <span>{user.streak ?? 0} Day Streak</span>
+                {streakGlow && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+                    LIVE
+                  </span>
+                )}
               </div>
               <div className="text-xs text-[#8c8b88]">Keep solving daily to maintain momentum</div>
             </div>

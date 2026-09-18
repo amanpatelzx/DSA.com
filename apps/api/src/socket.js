@@ -14,6 +14,29 @@ const matchmakingQueue = []; // Users waiting for a game
 // Global Open Challenges Lobby registry: challengeId -> OpenChallengeData
 export const openChallenges = new Map();
 
+// Concluded Battles registry: battleId -> { winnerUsername, winnerId, reason, concludedAt }
+export const concludedBattles = new Map();
+
+export const isBattleConcluded = (battleId) => {
+  if (!battleId) return false;
+  return concludedBattles.has(String(battleId));
+};
+
+export const markBattleConcluded = (battleId, { winnerUsername, winnerId, reason } = {}) => {
+  if (!battleId) return;
+  const bId = String(battleId);
+  concludedBattles.set(bId, {
+    winnerUsername: winnerUsername || 'Opponent',
+    winnerId: winnerId || null,
+    reason: reason || 'win',
+    concludedAt: Date.now()
+  });
+  if (liveBattles.has(bId)) {
+    liveBattles.delete(bId);
+    if (io) io.emit('live:top_battle_update', getTopLiveBattle());
+  }
+};
+
 export const getPublicOpenChallenges = () => {
   return Array.from(openChallenges.values())
     .map(c => ({
@@ -675,10 +698,44 @@ export const initSocket = (httpServer) => {
     });
 
     // 4. Battle Room Sync & Peer-to-Peer Relay
-    socket.on('battle:join', (battleId) => {
+    socket.on('battle:join', async (battleId) => {
       if (!battleId) return;
       socket.join(battleId);
       socketToBattle.set(socket.id, battleId);
+
+      // If battle already completed, notify joining socket immediately
+      if (isBattleConcluded(battleId)) {
+        const info = concludedBattles.get(String(battleId));
+        socket.emit('battle:already_concluded', {
+          battleId,
+          winnerUsername: info?.winnerUsername || 'Opponent'
+        });
+        return;
+      }
+
+      try {
+        const existingBattle = await Battle.findOne({
+          battleId: String(battleId),
+          status: { $in: ['COMPLETED', 'RESIGNED'] }
+        });
+        if (existingBattle) {
+          let winName = existingBattle.winnerUsername || '';
+          if (!winName && existingBattle.winnerId) {
+            const winUser = await User.findById(existingBattle.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existingBattle.opponentName || 'Opponent';
+          markBattleConcluded(battleId, {
+            winnerUsername: winName,
+            winnerId: existingBattle.winnerId,
+            reason: 'already_completed'
+          });
+          socket.emit('battle:already_concluded', {
+            battleId,
+            winnerUsername: winName
+          });
+        }
+      } catch {}
     });
 
     // Relay real peer submission updates
@@ -760,17 +817,18 @@ export const initSocket = (httpServer) => {
     });
 
     // Relay peer victory event and exchange final code
-    socket.on('battle:won', ({ battleId, winnerUsername, finalCode, language, username }) => {
+    socket.on('battle:won', async ({ battleId, winnerUsername, finalCode, language, username }) => {
       if (!battleId) return;
+      const bId = String(battleId);
       const userRecord = socketToUser.get(socket.id);
       const actualUsername = username || winnerUsername || userRecord?.username || 'user';
       const userKey = actualUsername.toLowerCase().trim();
 
       if (finalCode) {
-        if (!battleCodeStorage.has(battleId)) {
-          battleCodeStorage.set(battleId, new Map());
+        if (!battleCodeStorage.has(bId)) {
+          battleCodeStorage.set(bId, new Map());
         }
-        battleCodeStorage.get(battleId).set(userKey, {
+        battleCodeStorage.get(bId).set(userKey, {
           username: actualUsername !== 'user' ? actualUsername : (userRecord?.username || winnerUsername),
           userId: userRecord?.userId,
           code: finalCode,
@@ -779,11 +837,60 @@ export const initSocket = (httpServer) => {
         });
       }
 
-      socket.to(battleId).emit('battle:peer_won', {
-        winnerUsername,
+      // If battle already concluded in-memory, reject duplicate victory broadcast!
+      if (isBattleConcluded(bId)) {
+        const info = concludedBattles.get(bId);
+        socket.emit('battle:already_concluded', {
+          battleId: bId,
+          winnerUsername: info?.winnerUsername || winnerUsername
+        });
+        return;
+      }
+
+      // Check DB in case of server restart or unrated match already completed
+      try {
+        const existingBattle = await Battle.findOne({
+          battleId: bId,
+          status: { $in: ['COMPLETED', 'RESIGNED'] }
+        });
+        if (existingBattle) {
+          let winName = existingBattle.winnerUsername || '';
+          if (!winName && existingBattle.winnerId) {
+            const winUser = await User.findById(existingBattle.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existingBattle.opponentName || 'Opponent';
+          markBattleConcluded(bId, {
+            winnerUsername: winName,
+            winnerId: existingBattle.winnerId,
+            reason: 'already_completed'
+          });
+          socket.emit('battle:already_concluded', {
+            battleId: bId,
+            winnerUsername: winName
+          });
+          return;
+        }
+      } catch {}
+
+      // Mark legitimate first winner in concluded registry
+      markBattleConcluded(bId, {
+        winnerUsername: actualUsername,
+        winnerId: userRecord?.userId,
+        reason: 'win'
+      });
+
+      // Broadcast victory to opponent
+      socket.to(bId).emit('battle:peer_won', {
+        winnerUsername: actualUsername,
         finalCode,
         language
       });
+
+      // Leave the battle room so winner never receives any subsequent battle events
+      try {
+        socket.leave(bId);
+      } catch {}
     });
 
     // Relay peer resignation event so opponent immediately gets "You Won!"
@@ -792,9 +899,14 @@ export const initSocket = (httpServer) => {
       const userRecord = socketToUser.get(socket.id);
       const actualResignedUsername = resignedUsername || userRecord?.username || 'Opponent';
 
-      if (liveBattles.has(battleId)) {
-        liveBattles.delete(battleId);
+      if (isBattleConcluded(battleId)) {
+        return;
       }
+
+      markBattleConcluded(battleId, {
+        winnerUsername: winnerUsername || 'Opponent',
+        reason: 'resigned'
+      });
 
       // Broadcast to room so opponent instantly gets 'You Won by resignation'
       io.to(battleId).emit('battle:opponent_resigned', {
@@ -818,8 +930,44 @@ export const initSocket = (httpServer) => {
     });
 
     // 5. Live Battle Registry for homepage spectator
-    socket.on('battle:live_register', (data) => {
+    socket.on('battle:live_register', async (data) => {
       if (!data || !data.battleId) return;
+      const bId = String(data.battleId);
+
+      // If battle already concluded, notify socket immediately and do not register as live
+      if (isBattleConcluded(bId)) {
+        const info = concludedBattles.get(bId);
+        socket.emit('battle:already_concluded', {
+          battleId: bId,
+          winnerUsername: info?.winnerUsername || 'Opponent'
+        });
+        return;
+      }
+
+      try {
+        const existingBattle = await Battle.findOne({
+          battleId: bId,
+          status: { $in: ['COMPLETED', 'RESIGNED', 'ABANDONED', 'CANCELLED'] }
+        });
+        if (existingBattle) {
+          let winName = existingBattle.winnerUsername || '';
+          if (!winName && existingBattle.winnerId) {
+            const winUser = await User.findById(existingBattle.winnerId).select('username');
+            if (winUser) winName = winUser.username;
+          }
+          if (!winName) winName = existingBattle.opponentName || 'Opponent';
+          markBattleConcluded(bId, {
+            winnerUsername: winName,
+            winnerId: existingBattle.winnerId,
+            reason: 'db_completed'
+          });
+          socket.emit('battle:already_concluded', {
+            battleId: bId,
+            winnerUsername: winName
+          });
+          return;
+        }
+      } catch (err) {}
 
       const pRating = data.user?.rating || 1500;
       const oRating = data.opponent?.rating || 1500;

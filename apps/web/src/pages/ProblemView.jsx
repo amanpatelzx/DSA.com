@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link, Navigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
@@ -627,7 +627,7 @@ export default function ProblemView() {
         return;
       }
 
-      if (!isChallengeRef.current) return; // Full native copy/paste allowed in normal practice
+      if (!isChallengeRef.current || isBattleConcludedRef.current) return; // Full native copy/paste allowed in normal practice
 
       if (isCtrlOrCmd && (key === 'v' || key === 'c' || key === 'x')) {
         e.preventDefault();
@@ -650,10 +650,10 @@ export default function ProblemView() {
   };
 
   // Anti-Cheat System: Capture and block copy, cut, paste, drop, and right-click
-  // ONLY during competitive 1v1 battles and contests!
-  // In normal and resumed practice, ZERO listeners are attached so clipboard is 100% unrestricted.
+  // ONLY during active competitive 1v1 battles and contests!
+  // When match concludes or in normal practice, ZERO listeners are attached so clipboard is 100% unrestricted.
   useEffect(() => {
-    if (!isChallenge) return;
+    if (!isChallenge || isBattleConcluded || isContinuationMode) return;
 
     const editorDom = editorInstanceRef.current?.getDomNode();
 
@@ -830,6 +830,29 @@ export default function ProblemView() {
       };
     }
 
+    const queryBattleId = searchParams.get('battleId');
+    if (queryBattleId) {
+      try {
+        const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+        if (
+          completed.includes(queryBattleId) ||
+          localStorage.getItem(`dsa_battle_concluded_${queryBattleId}`) === 'true' ||
+          localStorage.getItem(`dsa_battle_won_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_lost_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_winner_${queryBattleId}`) ||
+          localStorage.getItem(`dsa_battle_loser_${queryBattleId}`)
+        ) {
+          return {
+            battleId: queryBattleId,
+            initialTime: 0,
+            isResume: false,
+            isExpired: true,
+            isConcluded: true
+          };
+        }
+      } catch {}
+    }
+
     const totalSecs = parseSeconds(timeControlParam);
     const now = Date.now();
 
@@ -841,14 +864,14 @@ export default function ProblemView() {
           const diffMs = session.endTime - now;
           const remainingSecs = Math.ceil(diffMs / 1000);
 
-          const queryBattleId = searchParams.get('battleId');
           if (remainingSecs > 0) {
             // Reconnect to active battle session and continue smoothly!
             return {
               battleId: session.battleId || queryBattleId || ('battle_' + activeUsername + '_' + now),
               initialTime: remainingSecs,
               isResume: true,
-              isExpired: false
+              isExpired: false,
+              isConcluded: false
             };
           } else if (diffMs > -60000) {
             // Expired recently during this match while reloading
@@ -856,7 +879,8 @@ export default function ProblemView() {
               battleId: session.battleId || queryBattleId || ('battle_' + activeUsername + '_' + now),
               initialTime: 0,
               isResume: true,
-              isExpired: true
+              isExpired: true,
+              isConcluded: true
             };
           }
         }
@@ -867,7 +891,6 @@ export default function ProblemView() {
 
     // Initialize brand new battle session anchored to real-world clock time
     const endTime = now + totalSecs * 1000;
-    const queryBattleId = searchParams.get('battleId');
     const battleId = queryBattleId || ('battle_' + (user?._id || user?.id || activeUsername) + '_' + now);
     const newSession = {
       matchKey: currentMatchKey,
@@ -888,7 +911,8 @@ export default function ProblemView() {
       battleId,
       initialTime: totalSecs,
       isResume: false,
-      isExpired: false
+      isExpired: false,
+      isConcluded: false
     };
   };
 
@@ -904,7 +928,113 @@ export default function ProblemView() {
   const timeLeftRef = useRef(initialBattleSessionRef.current.initialTime);
 
   const [timeLeft, setTimeLeft] = useState(initialBattleSessionRef.current.initialTime);
-  const [timerActive, setTimerActive] = useState(() => initialBattleSessionRef.current.initialTime > 0);
+  const [timerActive, setTimerActive] = useState(() => initialBattleSessionRef.current.initialTime > 0 && !initialBattleSessionRef.current.isConcluded);
+
+  const [isBattleConcluded, setIsBattleConcluded] = useState(() => Boolean(initialBattleSessionRef.current.isConcluded));
+  const isBattleConcludedRef = useRef(Boolean(initialBattleSessionRef.current.isConcluded));
+
+  const currentBattleId = initialBattleSessionRef.current?.battleId;
+  const initialHasWon = (() => {
+    try {
+      return localStorage.getItem(`dsa_battle_won_${currentBattleId}`) === activeUsername ||
+             localStorage.getItem(`dsa_battle_winner_${currentBattleId}`) === activeUsername;
+    } catch {
+      return false;
+    }
+  })();
+  const initialHasLost = (() => {
+    try {
+      return localStorage.getItem(`dsa_battle_lost_${currentBattleId}`) === activeUsername ||
+             localStorage.getItem(`dsa_battle_loser_${currentBattleId}`) === activeUsername;
+    } catch {
+      return false;
+    }
+  })();
+  const initialIsConcluded = (() => {
+    try {
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      return Boolean(
+        completed.includes(currentBattleId) ||
+        localStorage.getItem(`dsa_battle_concluded_${currentBattleId}`) === 'true' ||
+        initialHasWon ||
+        initialHasLost ||
+        initialBattleSessionRef.current?.isConcluded
+      );
+    } catch {
+      return false;
+    }
+  })();
+
+  const hasWonRef = useRef(Boolean(initialHasWon));
+  const hasLostRef = useRef(Boolean(initialHasLost));
+  const matchResultRef = useRef(null);
+
+  useEffect(() => {
+    isBattleConcludedRef.current = isBattleConcluded;
+  }, [isBattleConcluded]);
+
+  useEffect(() => {
+    matchResultRef.current = matchResult;
+    const bId = battleIdRef.current;
+    if (matchResult?.status?.startsWith('win')) {
+      hasWonRef.current = true;
+      try {
+        localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+      } catch {}
+    } else if (matchResult?.status === 'loss') {
+      hasLostRef.current = true;
+      try {
+        localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+      } catch {}
+    }
+  }, [matchResult, activeUsername]);
+
+  // If match is already over locally or in storage, redirect immediately to profile
+  useEffect(() => {
+    if (!isChallenge) return;
+    const bId = searchParams.get('battleId') || battleIdRef.current;
+    if (!bId) return;
+
+    try {
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      if (
+        completed.includes(bId) ||
+        localStorage.getItem(`dsa_battle_concluded_${bId}`) === 'true' ||
+        localStorage.getItem(`dsa_battle_won_${bId}`) ||
+        localStorage.getItem(`dsa_battle_lost_${bId}`) ||
+        initialHasWon ||
+        initialHasLost ||
+        initialIsConcluded ||
+        initialBattleSessionRef.current?.isConcluded
+      ) {
+        clearBattleSession(true);
+        navigate('/profile', { replace: true });
+        return;
+      }
+    } catch {}
+
+    // Check server if match was concluded in DB / socket registry
+    axios.get(`${API_BASE_URL}/api/battles/${bId}/status`)
+      .then((res) => {
+        if (res.data?.isConcluded) {
+          try {
+            const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+            if (!completed.includes(bId)) {
+              completed.push(bId);
+              localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+            }
+            localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+          } catch {}
+          clearBattleSession(true);
+          navigate('/profile', { replace: true });
+        }
+      })
+      .catch(() => {});
+  }, [isChallenge, navigate, initialHasWon, initialHasLost, initialIsConcluded, searchParams]);
 
   useEffect(() => {
     timeLeftRef.current = timeLeft;
@@ -968,15 +1098,75 @@ export default function ProblemView() {
         }
       });
 
+      socket.on('battle:already_concluded', ({ winnerUsername }) => {
+        setIsBattleConcluded(true);
+        isBattleConcludedRef.current = true;
+        setTimerActive(false);
+        clearBattleSession(true);
+        try {
+          const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+          if (!completed.includes(battleIdRef.current)) {
+            completed.push(battleIdRef.current);
+            localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+          }
+          localStorage.setItem(`dsa_battle_concluded_${battleIdRef.current}`, 'true');
+        } catch {}
+        navigate('/profile', { replace: true });
+      });
+
       socket.on('battle:peer_won', ({ winnerUsername, finalCode, language: oppLang }) => {
         if (finalCode) {
           setOpponentCode(finalCode);
           if (oppLang) setOpponentLanguage(oppLang);
         }
+
+        const bId = battleIdRef.current;
+        const hasLocallyWon = (() => {
+          try {
+            return localStorage.getItem(`dsa_battle_won_${bId}`) === activeUsername ||
+                   localStorage.getItem(`dsa_battle_winner_${bId}`) === activeUsername;
+          } catch {
+            return false;
+          }
+        })();
+
+        // CRITICAL IMMUTABLE WINNER GUARD:
+        // If active user has already won or is recorded as winner, active user can NEVER be defeated!
+        if (
+          hasWonRef.current ||
+          hasLocallyWon ||
+          matchResultRef.current?.status?.startsWith('win') ||
+          matchResult?.status?.startsWith('win')
+        ) {
+          console.log('Ignoring battle:peer_won: active user is already the winner!');
+          return;
+        }
+
+        // If match was already concluded or already in continuation, ignore peer_won
+        if (isBattleConcludedRef.current || isContinuationMode || hasLostRef.current) {
+          return;
+        }
+
         if (winnerUsername && winnerUsername !== activeUsername) {
+          hasLostRef.current = true;
+          setIsBattleConcluded(true);
+          isBattleConcludedRef.current = true;
+          isBattleRunningRef.current = false;
           playWrongAnswerSound();
           clearBattleSession(true);
           setTimerActive(false);
+
+          try {
+            localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+            localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+            localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+            const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+            if (!completed.includes(bId)) {
+              completed.push(bId);
+              localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+            }
+          } catch {}
+
           const ratingChange = isRated ? -12 : 0;
           setMatchResult({
             status: 'loss',
@@ -990,7 +1180,7 @@ export default function ProblemView() {
             totalProblems: matchProblems.length,
             winnerName: winnerUsername
           });
-          fetchOpponentBattleCode(battleIdRef.current);
+          fetchOpponentBattleCode(bId);
         }
       });
 
@@ -999,12 +1189,25 @@ export default function ProblemView() {
         if (resignedUsername && activeUsername && resignedUsername.toLowerCase() === activeUsername.toLowerCase()) {
           return;
         }
+        hasWonRef.current = true;
+        setIsBattleConcluded(true);
+        isBattleConcludedRef.current = true;
         setOpponentResigned(true);
         setOpponentResignedUsername(resignedUsername || opponentParam || 'Opponent');
         setShowOpponentResignedModal(true);
         clearBattleSession(true);
         setTimerActive(false);
         playVictorySound();
+        try {
+          const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+          if (!completed.includes(battleIdRef.current)) {
+            completed.push(battleIdRef.current);
+            localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+          }
+          localStorage.setItem(`dsa_battle_concluded_${battleIdRef.current}`, 'true');
+          localStorage.setItem(`dsa_battle_won_${battleIdRef.current}`, activeUsername);
+          localStorage.setItem(`dsa_battle_winner_${battleIdRef.current}`, activeUsername);
+        } catch {}
         if (window.__DSA_ACTIVE_BATTLE__) {
           window.__DSA_ACTIVE_BATTLE__.isRunning = false;
           window.__DSA_ACTIVE_BATTLE__ = null;
@@ -1102,7 +1305,7 @@ export default function ProblemView() {
 
   // Match timeout handler (records defeat if rated and displays time-out summary)
   const handleTimeExpired = useCallback(async () => {
-    if (!isChallenge || matchResult) return;
+    if (!isChallenge || matchResult || hasWonRef.current || isBattleConcludedRef.current || isContinuationMode) return;
 
     playWrongAnswerSound();
 
@@ -1113,6 +1316,16 @@ export default function ProblemView() {
     }
 
     clearBattleSession(true);
+
+    try {
+      const bId = battleIdRef.current;
+      localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      if (!completed.includes(bId)) {
+        completed.push(bId);
+        localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+      }
+    } catch {}
 
     const activeToken = localStorage.getItem('token') || token;
     let newRating = userModeRating;
@@ -1125,7 +1338,7 @@ export default function ProblemView() {
       if (activeToken) {
         try {
           await axios.post(
-            'http://localhost:5000/api/battles/record',
+            `${API_BASE_URL}/api/battles/record`,
             {
               battleId: battleIdRef.current,
               mode,
@@ -1395,7 +1608,7 @@ export default function ProblemView() {
   const isBattleRunningRef = useRef(false);
 
   // A battle is running if isChallenge is active, timer is active, opponent hasn't resigned, and match is not yet finished
-  const isBattleRunning = Boolean(isChallenge && !matchResult && !opponentResigned && timerActive && timeLeft > 0);
+  const isBattleRunning = Boolean(isChallenge && !isBattleConcluded && !isContinuationMode && !matchResult && !opponentResigned && timerActive && timeLeft > 0);
 
   useEffect(() => {
     isBattleRunningRef.current = isBattleRunning;
@@ -1478,7 +1691,7 @@ export default function ProblemView() {
       if (activeToken) {
         try {
           await axios.post(
-            'http://localhost:5000/api/battles/resign',
+            `${API_BASE_URL}/api/battles/resign`,
             {
               battleId: battleIdRef.current,
               mode,
@@ -1498,6 +1711,17 @@ export default function ProblemView() {
 
       // Clean up battle storage and guards
       clearBattleSession();
+      try {
+        const bId = battleIdRef.current;
+        localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+        localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+        const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+        if (!completed.includes(bId)) {
+          completed.push(bId);
+          localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+        }
+      } catch {}
       isBattleRunningRef.current = false;
       if (window.__DSA_ACTIVE_BATTLE__) {
         window.__DSA_ACTIVE_BATTLE__.isRunning = false;
@@ -1572,14 +1796,34 @@ export default function ProblemView() {
 
   const handleContinueSolving = () => {
     setIsContinuationMode(true);
+    setIsBattleConcluded(true);
+    isBattleConcludedRef.current = true;
     setMatchResult(null);
     setTimerActive(false);
+    setTimeLeft(0);
     isBattleRunningRef.current = false;
     if (window.__DSA_ACTIVE_BATTLE__) {
       window.__DSA_ACTIVE_BATTLE__.isRunning = false;
       window.__DSA_ACTIVE_BATTLE__ = null;
     }
     clearBattleSession(true);
+    try {
+      const bId = battleIdRef.current;
+      const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+      if (!completed.includes(bId)) {
+        completed.push(bId);
+        localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+      }
+      if (hasWonRef.current) {
+        localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+      }
+      if (hasLostRef.current) {
+        localStorage.setItem(`dsa_battle_lost_${bId}`, activeUsername);
+        localStorage.setItem(`dsa_battle_loser_${bId}`, activeUsername);
+      }
+      navigate(`/problem/${activeSlug}`, { replace: true });
+    } catch {}
   };
 
   const handleSubmitCheatingReport = async (e) => {
@@ -2254,17 +2498,50 @@ export default function ProblemView() {
     }
 
     try {
+      const bId = battleIdRef.current;
+      const hasLostLocally = (() => {
+        try {
+          return localStorage.getItem(`dsa_battle_lost_${bId}`) === activeUsername ||
+                 localStorage.getItem(`dsa_battle_loser_${bId}`) === activeUsername;
+        } catch {
+          return false;
+        }
+      })();
+      const hasWonLocally = (() => {
+        try {
+          return localStorage.getItem(`dsa_battle_won_${bId}`) !== null ||
+                 localStorage.getItem(`dsa_battle_winner_${bId}`) !== null;
+        } catch {
+          return false;
+        }
+      })();
+
+      const isConcluded = Boolean(
+        isBattleConcluded ||
+        isContinuationMode ||
+        isBattleConcludedRef.current ||
+        hasLostRef.current ||
+        hasWonRef.current ||
+        hasLostLocally ||
+        (hasWonLocally && localStorage.getItem(`dsa_battle_won_${bId}`) !== activeUsername) ||
+        matchResultRef.current?.status === 'loss' ||
+        matchResult?.status === 'loss'
+      );
+
       const res = await axios.post(
         'http://localhost:5000/api/judge/submit',
         {
           language,
           code,
           slug: activeSlug,
+          battleId: bId,
           mode,
           timeControl: timeControlParam,
-          opponentName: opponentParam,
-          opponentRating: opponentRatingParam,
-          isRated
+          opponentName: isConcluded ? null : opponentParam,
+          opponentRating: isConcluded ? null : opponentRatingParam,
+          isRated: isConcluded ? false : isRated,
+          isContinuation: isConcluded,
+          isBattleConcluded: isConcluded
         },
         activeToken ? { headers: { Authorization: `Bearer ${activeToken}` } } : {}
       );
@@ -2276,8 +2553,12 @@ export default function ProblemView() {
           const nextSolved = new Set([...solvedProblemSlugs, activeSlug]);
           setSolvedProblemSlugs(nextSolved);
 
-          // In normal practice mode: stop timer and record solve time
-          if (!isChallenge) {
+          if (typeof refreshUser === 'function') {
+            refreshUser();
+          }
+
+          // In normal practice mode or continuation mode: stop timer and record solve time
+          if (!isChallenge || isConcluded) {
             setIsPracticeTimerRunning(false);
             setIsPracticeSolved(true);
             setPracticeSolveTime(practiceSeconds);
@@ -2324,22 +2605,46 @@ export default function ProblemView() {
             playVictorySound();
             setTimerActive(false);
 
-            if (isChallenge) {
+            // An unconcluded challenge ONLY if user is not already concluded, not already lost,
+            // and the battle was not already marked finished on the backend or locally
+            const isUnconcludedChallenge = isChallenge &&
+                                          !isConcluded &&
+                                          !hasLostRef.current &&
+                                          !hasLostLocally &&
+                                          !res.data?.battleAlreadyFinished;
+
+            if (isUnconcludedChallenge) {
+              hasWonRef.current = true;
+              setIsBattleConcluded(true);
+              isBattleConcludedRef.current = true;
+              isBattleRunningRef.current = false;
+
+              try {
+                localStorage.setItem(`dsa_battle_won_${bId}`, activeUsername);
+                localStorage.setItem(`dsa_battle_winner_${bId}`, activeUsername);
+                localStorage.setItem(`dsa_battle_concluded_${bId}`, 'true');
+                const completed = JSON.parse(localStorage.getItem('dsa_completed_battles') || '[]');
+                if (!completed.includes(bId)) {
+                  completed.push(bId);
+                  localStorage.setItem('dsa_completed_battles', JSON.stringify(completed));
+                }
+              } catch {}
+
               if (socketRef.current) {
                 socketRef.current.emit('battle:test_update', {
-                  battleId: battleIdRef.current,
+                  battleId: bId,
                   testsPassed: res.data.cases?.length || 3,
                   testsTotal: res.data.cases?.length || 3
                 });
                 socketRef.current.emit('battle:won', {
-                  battleId: battleIdRef.current,
+                  battleId: bId,
                   winnerUsername: activeUsername,
                   finalCode: code,
                   language
                 });
-                socketRef.current.emit('battle:live_leave', { battleId: battleIdRef.current });
+                socketRef.current.emit('battle:live_leave', { battleId: bId });
               }
-              fetchOpponentBattleCode(battleIdRef.current);
+              fetchOpponentBattleCode(bId);
               const isRatedResult = Boolean(res.data.isRated);
               const ratingChange = typeof res.data.ratingChange === 'number' ? res.data.ratingChange : (isRated ? 16 : 0);
               setMatchResult({
@@ -2354,7 +2659,11 @@ export default function ProblemView() {
                 totalProblems: matchProblems.length
               });
             } else {
-              // In Normal Practice: Show celebratory congratulations modal
+              // In Normal Practice, Post-Battle Continuation, or Defeated Opponent:
+              // Show celebratory congratulations modal (NEVER battle victory or rating change)
+              setIsContinuationMode(true);
+              setIsBattleConcluded(true);
+              isBattleConcludedRef.current = true;
               setPracticeSolvedModal({
                 title: problem?.title || activeSlug,
                 slug: activeSlug,
@@ -2419,6 +2728,11 @@ export default function ProblemView() {
     }
   };
 
+  if (isChallenge && (initialIsConcluded || isBattleConcluded) && !matchResult && !showOpponentResignedModal) {
+    clearBattleSession(true);
+    return <Navigate to="/profile" replace />;
+  }
+
   if (!problem) return (
     <div className="flex items-center justify-center min-h-[60vh] gap-3 text-white/60">
       <div className="w-8 h-8 border-2 border-[#81b64c]/20 border-t-[#81b64c] rounded-full animate-spin"></div>
@@ -2430,7 +2744,7 @@ export default function ProblemView() {
     <div className="flex flex-col h-full flex-1 min-h-0 bg-[#161512] text-[#e3e2de] overflow-hidden">
       
       {/* Top Arena or Practice Bar */}
-      {isContinuationMode ? (
+      {(isContinuationMode || isBattleConcluded || isBattleConcludedRef.current || Boolean(matchResult) || hasWonRef.current || hasLostRef.current) ? (
         <div className="bg-[#1e1d1a] border-b border-[#2d2a26] px-4 py-2.5 flex items-center justify-between gap-4 shrink-0 shadow-md">
           {/* Left: Problem & Continuation Mode Badge */}
           <div className="flex items-center gap-3">
@@ -3667,7 +3981,18 @@ export default function ProblemView() {
       {/* VICTORY / DEFEAT / MATCH FINISHED MODAL (ONLY IN 1V1 BATTLES) */}
       {matchResult && isChallenge && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl animate-in zoom-in duration-200">
+          <div className="bg-[#21201d] border border-white/20 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative animate-in zoom-in duration-200">
+            <button
+              type="button"
+              onClick={() => {
+                clearBattleSession(true);
+                navigate('/profile');
+              }}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/70 hover:text-white flex items-center justify-center text-sm font-bold transition cursor-pointer"
+              title="Close and return to profile"
+            >
+              ✕
+            </button>
             <div className={`w-20 h-20 rounded-full flex items-center justify-center text-4xl mx-auto mb-4 shadow-xl ${
               matchResult.status === 'loss'
                 ? 'bg-gradient-to-tr from-rose-700 to-red-500'
@@ -3794,8 +4119,18 @@ export default function ProblemView() {
               </div>
             </div>
 
-            {/* Option to Continue Solving All Questions (for loss or timeout) */}
-            {(matchResult.status === 'loss' || matchResult.status === 'timeout') && (
+            {/* Option to Continue Solving Remaining Questions in Normal Editor */}
+            {matchResult.status?.startsWith('win') ? (
+              <button
+                type="button"
+                onClick={handleContinueSolving}
+                className="w-full mb-3 bg-[#2a2926] hover:bg-[#383632] border border-white/15 text-white font-bold text-xs sm:text-sm py-2.5 px-4 rounded-xl transition shadow flex items-center justify-center gap-2 cursor-pointer group"
+              >
+                <span>💻</span>
+                <span>Continue In Normal Editor (Keep Coding)</span>
+                <span className="group-hover:translate-x-1 transition-transform">→</span>
+              </button>
+            ) : (
               <button
                 type="button"
                 onClick={handleContinueSolving}
@@ -3826,7 +4161,7 @@ export default function ProblemView() {
       )}
 
       {/* NORMAL PRACTICE CONGRATULATIONS & SOLVE MORE MODAL */}
-      {practiceSolvedModal && !isChallenge && (
+      {practiceSolvedModal && (!isChallenge || isContinuationMode || isBattleConcluded) && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-[#21201d] border border-emerald-500/30 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-200">
             {/* Top subtle glow */}
@@ -4450,7 +4785,10 @@ export default function ProblemView() {
             <div className="flex flex-col sm:flex-row gap-3">
               <button
                 type="button"
-                onClick={() => setShowOpponentResignedModal(false)}
+                onClick={() => {
+                  setShowOpponentResignedModal(false);
+                  handleContinueSolving();
+                }}
                 className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-extrabold text-xs py-3 px-4 rounded-xl transition shadow-lg shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-1.5"
               >
                 <span>💻</span>

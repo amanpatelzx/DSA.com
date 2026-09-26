@@ -2,14 +2,14 @@ import mongoose from 'mongoose';
 
 const ratingHistorySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  battleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Battle' },
+  battleId: { type: String, index: true },
   mode: { type: String, enum: ['bullet', 'blitz', 'rapid', 'classical'], required: true },
   oldRating: { type: Number, required: true },
   ratingChange: { type: Number, required: true },
   newRating: { type: Number, required: true },
   reason: { 
     type: String, 
-    enum: ['BATTLE', 'ADMIN_ADJUSTMENT', 'CHEATING_ROLLBACK', 'SEASON_RESET'], 
+    enum: ['BATTLE', 'BATTLE_WIN', 'BATTLE_LOSS', 'ADMIN_ADJUSTMENT', 'CHEATING_ROLLBACK', 'SEASON_RESET'], 
     default: 'BATTLE' 
   }
 }, { timestamps: true });

@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 
 const fairPlayEventSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  battleId: { type: mongoose.Schema.Types.ObjectId, ref: 'Battle', index: true },
+  battleId: { type: String, index: true },
   type: { 
     type: String, 
     enum: [

@@ -137,10 +137,15 @@ router.post('/submit', async (req, res) => {
     let battleAlreadyFinished = false;
     let existingBattleWinnerUsername = null;
 
+    // Sanitize battleId: ignore temporary practice session IDs and non-battle contexts
+    const effectiveBattleId = (battleId && !String(battleId).startsWith('battle_practice_') && battleId !== 'null' && battleId !== 'undefined')
+      ? String(battleId)
+      : null;
+
     // ATOMIC LOCK: Check if battle is already concluded or locked by another concurrent request
     // This prevents a race condition where two players submit simultaneously and both get treated as winners.
-    if (battleId) {
-      const bIdStr = String(battleId);
+    if (effectiveBattleId) {
+      const bIdStr = effectiveBattleId;
       if (isBattleConcluded(bIdStr) || isContinuation || clientConcluded) {
         battleAlreadyFinished = true;
       } else if (result.status === 'Accepted') {
@@ -170,27 +175,44 @@ router.post('/submit', async (req, res) => {
         result.status === 'Runtime Error' ? 'RUNTIME_ERROR' :
         result.status === 'Time Limit Exceeded' ? 'TIME_LIMIT_EXCEEDED' : 'WRONG_ANSWER';
 
-      submission = await Submission.create({
-        userId: user._id,
-        problemId: problem ? problem._id : user._id,
-        battleId: battleId || null,
-        language: language || 'cpp',
-        code,
-        status: dbStatus,
-        runtime: parseInt(result.runtime) || 40,
-        memory: parseFloat(result.memory) || 14.2,
-        testCasesPassed: passedCases,
-        totalTestCases: totalCases,
-        errorMessage: result.errorMessage
-      });
+      try {
+        submission = await Submission.create({
+          userId: user._id,
+          problemId: problem ? problem._id : user._id,
+          battleId: effectiveBattleId,
+          language: language || 'cpp',
+          code,
+          status: dbStatus,
+          runtime: parseInt(result.runtime) || 40,
+          memory: parseFloat(result.memory) || 14.2,
+          testCasesPassed: passedCases,
+          totalTestCases: totalCases,
+          errorMessage: result.errorMessage
+        });
+      } catch (subErr) {
+        console.warn('Submission creation warning, retrying without battleId:', subErr.message);
+        submission = await Submission.create({
+          userId: user._id,
+          problemId: problem ? problem._id : user._id,
+          battleId: null,
+          language: language || 'cpp',
+          code,
+          status: dbStatus,
+          runtime: parseInt(result.runtime) || 40,
+          memory: parseFloat(result.memory) || 14.2,
+          testCasesPassed: passedCases,
+          totalTestCases: totalCases,
+          errorMessage: result.errorMessage
+        });
+      }
 
       const ratingKey = (mode || 'blitz').toLowerCase();
       newRating = (user.ratings && user.ratings[ratingKey]) || 1500;
 
-      if (!battleAlreadyFinished && battleId) {
+      if (!battleAlreadyFinished && effectiveBattleId) {
         try {
           const existingBattle = await Battle.findOne({
-            battleId,
+            battleId: effectiveBattleId,
             status: { $in: ['COMPLETED', 'RESIGNED'] }
           });
           if (existingBattle) {
@@ -204,7 +226,7 @@ router.post('/submit', async (req, res) => {
               winName = existingBattle.opponentName || 'Opponent';
             }
             existingBattleWinnerUsername = winName;
-            markBattleConcluded(battleId, {
+            markBattleConcluded(effectiveBattleId, {
               winnerUsername: winName,
               winnerId: existingBattle.winnerId,
               reason: 'already_completed'
@@ -269,8 +291,8 @@ router.post('/submit', async (req, res) => {
         }
 
         // CRITICAL: Mark this battle as concluded in socket registry for ALL match formats (rated and unrated)
-        if (battleId && !battleAlreadyFinished) {
-          markBattleConcluded(battleId, {
+        if (effectiveBattleId && !battleAlreadyFinished) {
+          markBattleConcluded(effectiveBattleId, {
             winnerUsername: user.username,
             winnerId: user._id,
             reason: 'win'
@@ -282,8 +304,8 @@ router.post('/submit', async (req, res) => {
           try {
             const io = getIO();
             if (io) {
-              io.to(String(battleId)).emit('battle:force_stop', {
-                battleId: String(battleId),
+              io.to(effectiveBattleId).emit('battle:force_stop', {
+                battleId: effectiveBattleId,
                 winnerUsername: user.username,
                 winnerId: String(user._id),
                 reason: 'opponent_solved'
@@ -323,7 +345,7 @@ router.post('/submit', async (req, res) => {
       if (!battleAlreadyFinished && (isRatedMatch || opponentName)) {
         try {
           await Battle.create({
-            battleId: battleId || `battle_${Date.now()}`,
+            battleId: effectiveBattleId || `battle_${Date.now()}`,
             mode: mode || 'Blitz',
             timeControlStr: req.body.timeControl || '3 min',
             problemTitle: problem ? problem.title : 'Two Sum',
@@ -362,7 +384,7 @@ router.post('/submit', async (req, res) => {
       ratingChange,
       streak: user ? user.streak : 1,
       battleAlreadyFinished: Boolean(battleAlreadyFinished),
-      winnerUsername: existingBattleWinnerUsername || (battleId && isBattleConcluded(battleId) ? concludedBattles.get(String(battleId))?.winnerUsername : null)
+      winnerUsername: existingBattleWinnerUsername || (effectiveBattleId && isBattleConcluded(effectiveBattleId) ? concludedBattles.get(effectiveBattleId)?.winnerUsername : null)
     });
   } catch (error) {
     console.error('Judge submit error:', error);

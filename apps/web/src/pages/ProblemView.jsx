@@ -1117,7 +1117,25 @@ export default function ProblemView() {
             handleTimeExpiredRef.current({ isDraw: true });
           }
         } else {
-          navigate('/profile', { replace: true });
+          // Transition to practice/training ground mode instead of auto-redirecting.
+          // The user can close the result popup and keep solving in normal practice mode.
+          const isWinner = winnerUsername && activeUsername && winnerUsername.toLowerCase() === activeUsername.toLowerCase();
+          if (!isWinner) {
+            hasLostRef.current = true;
+            const ratingChange = isRated ? -12 : 0;
+            setMatchResult({
+              status: 'loss',
+              newRating: isRated ? Math.max(100, userModeRating + ratingChange) : userModeRating,
+              ratingChange,
+              isRated,
+              streak: 0,
+              mode,
+              opponent: opponentParam,
+              problemsSolved: solvedProblemSlugs.size,
+              totalProblems: matchProblems.length,
+              winnerName: winnerUsername || 'Opponent'
+            });
+          }
         }
       });
 
@@ -1195,12 +1213,6 @@ export default function ProblemView() {
             winnerName: winnerUsername
           });
           fetchOpponentBattleCode(bId);
-
-          // Auto-redirect loser to profile after 5 seconds so they can see the Defeat modal
-          setTimeout(() => {
-            clearBattleSession(true);
-            navigate('/profile', { replace: true });
-          }, 5000);
         }
       });
 
@@ -1292,12 +1304,6 @@ export default function ProblemView() {
         }
 
         fetchOpponentBattleCode(bId);
-
-        // Auto-redirect to profile after 5 seconds so the loser sees the Defeat modal briefly
-        setTimeout(() => {
-          clearBattleSession(true);
-          navigate('/profile', { replace: true });
-        }, 5000);
       });
     } catch (err) {
       console.warn('Live battle socket connect warning:', err);
@@ -2586,12 +2592,14 @@ export default function ProblemView() {
     setActiveBottomTab('result');
 
     // GUARD: Block submissions if the battle is already over (user lost or won)
-    // This prevents the defeated user from continuing to solve and getting misleading popups.
-    if (isChallenge && (hasLostRef.current || (isBattleConcludedRef.current && !hasWonRef.current && !isContinuationMode))) {
+    // BUT allow submissions when user is in continuation/practice mode (training ground after closing the popup).
+    // This prevents the defeated user from getting misleading battle popups while the battle is still "live",
+    // but once they dismiss the result and enter practice mode, they can submit freely and get normal "Accepted" messages.
+    if (isChallenge && !isContinuationMode && (hasLostRef.current || (isBattleConcludedRef.current && !hasWonRef.current))) {
       setIsRunning(false);
       setRunResults({
         status: 'Battle Ended',
-        errorMessage: 'This battle has already been concluded. Your opponent solved the problem first. You can continue practicing in normal mode.',
+        errorMessage: 'This battle has already been concluded. Your opponent solved the problem first. Close the result popup to continue solving in practice mode.',
         cases: []
       });
       return;
@@ -2651,7 +2659,7 @@ export default function ProblemView() {
           language,
           code,
           slug: activeSlug,
-          battleId: bId,
+          battleId: isChallenge ? bId : null,
           mode,
           timeControl: timeControlParam,
           opponentName: isConcluded ? null : opponentParam,

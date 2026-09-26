@@ -62,6 +62,7 @@ export const CPP_HARNESS_HEADER = `#ifndef DSA_HARNESS_H
 #include <stack>
 #include <climits>
 #include <cmath>
+#include <type_traits>
 
 using namespace std;
 
@@ -215,6 +216,61 @@ inline vector<int> parseVectorInt(const string& allInput, const string& key, int
         string t = trim(token);
         if (!t.empty()) {
             try { res.push_back(stoi(t)); } catch (...) {}
+        }
+    }
+    return res;
+}
+
+inline vector<bool> parseVectorBool(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<bool> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        for (auto &c : t) c = tolower(c);
+        if (!t.empty()) {
+            res.push_back(t == "true" || t == "1");
+        }
+    }
+    return res;
+}
+
+inline vector<double> parseVectorDouble(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<double> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) {
+            try { res.push_back(stod(t)); } catch (...) {}
+        }
+    }
+    return res;
+}
+
+inline vector<long long> parseVectorLong(const string& allInput, const string& key, int idx = 0) {
+    string s = extractParamRaw(allInput, key, idx);
+    vector<long long> res;
+    size_t start = s.find('[');
+    size_t end = s.rfind(']');
+    if (start == string::npos || end == string::npos || end <= start) return res;
+    string inner = s.substr(start + 1, end - start - 1);
+    stringstream ss(inner);
+    string token;
+    while (getline(ss, token, ',')) {
+        string t = trim(token);
+        if (!t.empty()) {
+            try { res.push_back(stoll(t)); } catch (...) {}
         }
     }
     return res;
@@ -529,6 +585,58 @@ inline void printTreeNode(TreeNode* root) {
     cout << "]";
 }
 
+inline void printVectorBool(const vector<bool>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << (v[i] ? "true" : "false") << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorDouble(const vector<double>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << v[i] << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorLong(const vector<long long>& v) {
+    cout << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        cout << v[i] << (i + 1 < v.size() ? "," : "");
+    }
+    cout << "]";
+}
+
+inline void printVectorTreeNode(const vector<TreeNode*>& list) {
+    cout << "[";
+    for (size_t i = 0; i < list.size(); i++) {
+        printTreeNode(list[i]);
+        if (i + 1 < list.size()) cout << ",";
+    }
+    cout << "]";
+}
+
+// Universal stream operator overload for vector<T> (including vector<bool>, nested vectors, etc.)
+// Prevents any compilation error when cout << res << endl is generated for vector return types
+template<typename T>
+inline ostream& operator<<(ostream& os, const vector<T>& v) {
+    os << "[";
+    for (size_t i = 0; i < v.size(); i++) {
+        if constexpr (is_same_v<T, bool>) {
+            os << (v[i] ? "true" : "false");
+        } else if constexpr (is_same_v<T, string> || is_same_v<T, char>) {
+            os << "\\"" << v[i] << "\\"";
+        } else {
+            os << v[i];
+        }
+        if (i + 1 < v.size()) os << ",";
+    }
+    os << "]";
+    return os;
+}
+
 #endif
 `;
 
@@ -575,6 +683,12 @@ const generateCppHarness = (slug, userCode, customMeta = null) => {
         parseLines.push(`    string ${pName} = parseString(allInput, "${pName}", ${idx});`);
       } else if (pType === 'integer[]' || pType === 'list<integer>') {
         parseLines.push(`    vector<int> ${pName} = parseVectorInt(allInput, "${pName}", ${idx});`);
+      } else if (pType === 'long[]' || pType === 'list<long>') {
+        parseLines.push(`    vector<long long> ${pName} = parseVectorLong(allInput, "${pName}", ${idx});`);
+      } else if (pType === 'double[]' || pType === 'list<double>' || pType === 'float[]' || pType === 'list<float>') {
+        parseLines.push(`    vector<double> ${pName} = parseVectorDouble(allInput, "${pName}", ${idx});`);
+      } else if (pType === 'boolean[]' || pType === 'list<boolean>') {
+        parseLines.push(`    vector<bool> ${pName} = parseVectorBool(allInput, "${pName}", ${idx});`);
       } else if (pType === 'character[]') {
         parseLines.push(`    vector<char> ${pName} = parseVectorChar(allInput, "${pName}", ${idx});`);
       } else if (pType === 'string[]' || pType === 'list<string>') {
@@ -639,6 +753,30 @@ ${parseLines.join('\n')}
     printVector(res);
     cout << endl;
 `;
+    } else if (returnType === 'long[]' || returnType === 'list<long>') {
+      dynamicExecution = `
+    Solution solver;
+${parseLines.join('\n')}
+    vector<long long> res = solver.${funcName}(${callArgs.join(', ')});
+    printVectorLong(res);
+    cout << endl;
+`;
+    } else if (returnType === 'double[]' || returnType === 'list<double>') {
+      dynamicExecution = `
+    Solution solver;
+${parseLines.join('\n')}
+    vector<double> res = solver.${funcName}(${callArgs.join(', ')});
+    printVectorDouble(res);
+    cout << endl;
+`;
+    } else if (returnType === 'boolean[]' || returnType === 'list<boolean>') {
+      dynamicExecution = `
+    Solution solver;
+${parseLines.join('\n')}
+    vector<bool> res = solver.${funcName}(${callArgs.join(', ')});
+    printVectorBool(res);
+    cout << endl;
+`;
     } else if (returnType === 'character[]') {
       dynamicExecution = `
     Solution solver;
@@ -693,6 +831,14 @@ ${parseLines.join('\n')}
 ${parseLines.join('\n')}
     TreeNode* res = solver.${funcName}(${callArgs.join(', ')});
     printTreeNode(res);
+    cout << endl;
+`;
+    } else if (returnType === 'list<treenode>') {
+      dynamicExecution = `
+    Solution solver;
+${parseLines.join('\n')}
+    vector<TreeNode*> res = solver.${funcName}(${callArgs.join(', ')});
+    printVectorTreeNode(res);
     cout << endl;
 `;
     } else if (returnType === 'void') {
@@ -1226,6 +1372,10 @@ const generateJavaHarness = (slug, userCode, customMeta = null) => {
       parseLines.push(`        String ${pName} = parseString(allInput, "${pName}", ${idx});`);
     } else if (pType === 'integer[]' || pType === 'list<integer>') {
       parseLines.push(`        int[] ${pName} = parseIntArray(allInput, "${pName}", ${idx});`);
+    } else if (pType === 'double[]' || pType === 'list<double>' || pType === 'float[]' || pType === 'list<float>') {
+      parseLines.push(`        double[] ${pName} = parseDoubleArray(allInput, "${pName}", ${idx});`);
+    } else if (pType === 'boolean[]' || pType === 'list<boolean>') {
+      parseLines.push(`        boolean[] ${pName} = parseBooleanArray(allInput, "${pName}", ${idx});`);
     } else if (pType === 'character[]') {
       parseLines.push(`        char[] ${pName} = parseCharArray(allInput, "${pName}", ${idx});`);
     } else if (pType === 'string[]' || pType === 'list<string>') {
@@ -1298,6 +1448,33 @@ ${parseLines.join('\n')}
         var res = solver.${targetFuncName}(${callArgs.join(', ')});
         if (res instanceof int[]) printIntArray((int[])res);
         else if (res instanceof List) printIntList((List<?>)res);
+        else System.out.println(res);
+    `;
+  } else if (returnType === 'boolean[]' || returnType === 'list<boolean>') {
+    executionSnippet = `
+        Solution solver = new Solution();
+${parseLines.join('\n')}
+        var res = solver.${targetFuncName}(${callArgs.join(', ')});
+        if (res instanceof boolean[]) printBooleanArray((boolean[])res);
+        else if (res instanceof List) printBooleanList((List<?>)res);
+        else System.out.println(res);
+    `;
+  } else if (returnType === 'double[]' || returnType === 'list<double>') {
+    executionSnippet = `
+        Solution solver = new Solution();
+${parseLines.join('\n')}
+        var res = solver.${targetFuncName}(${callArgs.join(', ')});
+        if (res instanceof double[]) printDoubleArray((double[])res);
+        else if (res instanceof List) printDoubleList((List<?>)res);
+        else System.out.println(res);
+    `;
+  } else if (returnType === 'string[]' || returnType === 'list<string>' || returnType === 'list<String>') {
+    executionSnippet = `
+        Solution solver = new Solution();
+${parseLines.join('\n')}
+        var res = solver.${targetFuncName}(${callArgs.join(', ')});
+        if (res instanceof String[]) printStringArray((String[])res);
+        else if (res instanceof List) printStringList((List<?>)res);
         else System.out.println(res);
     `;
   } else if (returnType === 'integer[][]' || returnType === 'list<list<integer>>') {
@@ -1491,6 +1668,44 @@ public class Main {
         return res;
     }
 
+    static boolean[] parseBooleanArray(String allInput, String key, int idx) {
+        String s = extractParamRaw(allInput, key, idx);
+        int start = s.indexOf('[');
+        int end = s.lastIndexOf(']');
+        if (start == -1 || end == -1 || end <= start) return new boolean[0];
+        String inner = s.substring(start + 1, end);
+        String[] tokens = inner.split(",");
+        List<Boolean> list = new ArrayList<>();
+        for (String t : tokens) {
+            String tr = trim(t).toLowerCase();
+            if (!tr.isEmpty()) {
+                list.add(tr.equals("true") || tr.equals("1"));
+            }
+        }
+        boolean[] res = new boolean[list.size()];
+        for (int i = 0; i < list.size(); i++) res[i] = list.get(i);
+        return res;
+    }
+
+    static double[] parseDoubleArray(String allInput, String key, int idx) {
+        String s = extractParamRaw(allInput, key, idx);
+        int start = s.indexOf('[');
+        int end = s.lastIndexOf(']');
+        if (start == -1 || end == -1 || end <= start) return new double[0];
+        String inner = s.substring(start + 1, end);
+        String[] tokens = inner.split(",");
+        List<Double> list = new ArrayList<>();
+        for (String t : tokens) {
+            String tr = trim(t);
+            if (!tr.isEmpty()) {
+                try { list.add(Double.parseDouble(tr)); } catch (Exception ignored) {}
+            }
+        }
+        double[] res = new double[list.size()];
+        for (int i = 0; i < list.size(); i++) res[i] = list.get(i);
+        return res;
+    }
+
     static char[] parseCharArray(String allInput, String key, int idx) {
         String s = extractParamRaw(allInput, key, idx);
         int start = s.indexOf('[');
@@ -1674,6 +1889,66 @@ public class Main {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < list.size(); i++) {
             sb.append(list.get(i));
+            if (i + 1 < list.size()) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printBooleanArray(boolean[] arr) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arr.length; i++) {
+            sb.append(arr[i] ? "true" : "false");
+            if (i + 1 < arr.length) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printBooleanList(List<?> list) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < list.size(); i++) {
+            sb.append(list.get(i));
+            if (i + 1 < list.size()) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printDoubleArray(double[] arr) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arr.length; i++) {
+            sb.append(arr[i]);
+            if (i + 1 < arr.length) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printDoubleList(List<?> list) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < list.size(); i++) {
+            sb.append(list.get(i));
+            if (i + 1 < list.size()) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printStringArray(String[] arr) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < arr.length; i++) {
+            sb.append("\\"").append(arr[i]).append("\\"");
+            if (i + 1 < arr.length) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb);
+    }
+
+    static void printStringList(List<?> list) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < list.size(); i++) {
+            sb.append("\\"").append(list.get(i)).append("\\"");
             if (i + 1 < list.size()) sb.append(",");
         }
         sb.append("]");
